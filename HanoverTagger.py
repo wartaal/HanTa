@@ -5,6 +5,7 @@ import pickle
 import gzip
 import ast
 import pprint
+import re
 
 State = namedtuple("State", ["p2", "p1"])
 
@@ -76,10 +77,12 @@ class HanoverTagger:
                         if lp1 > lowerbound:
                             tag2 = state.p1
                             newstate = State(p2=tag2, p1=tag1)
-                            if newstate in table[j]:
-                                table[j][newstate] = logaddexp(lp1, table[j][newstate])
-                            else:
-                                table[j][newstate] = lp1
+                            if newstate not in table[j] or lp1 > table[j][newstate]:
+                                 table[j][newstate] = lp1
+                            #if newstate in table[j]:
+                            #    table[j][newstate] = logaddexp(lp1, table[j][newstate])
+                            #else:
+                            #    table[j][newstate] = lp1
 
         for state in table[-2]:
             lp = table[-2][state]
@@ -88,10 +91,12 @@ class HanoverTagger:
                 if lp1 > lowerbound:
                     tag2 = state.p1
                     newstate = State(p2=tag2, p1=tag1)
-                    if newstate in table[-1]:
-                        table[-1][newstate] = logaddexp(lp1, table[-1][newstate])
-                    else:
+                    if newstate not in table[-1] or lp1 > table[-1][newstate]:
                         table[-1][newstate] = lp1
+                    #if newstate in table[-1]:
+                    #    table[-1][newstate] = logaddexp(lp1, table[-1][newstate])
+                    #else:
+                    #    table[-1][newstate] = lp1
 
         if self._debug:
             pprint.pprint(table)
@@ -102,7 +107,7 @@ class HanoverTagger:
                 continue
             pos = state.p1[4:]
             if pos in results:
-                results[pos] = logaddexp(results[pos], lp)
+                results[pos] = logaddexp(results[pos], lp) # TODO Maximum!!!
             else:
                 results[pos] = lp
         results = list(results.items())
@@ -191,7 +196,7 @@ class HanoverTagger:
                cs = False
             elif casesensitive:
                cs = True
-            wprobs = dict(self.tag_word(w,casesensitive=cs))
+            wprobs = dict(self.tag_word(w,casesensitive=cs,conditional=True))
             row = {}
             backpointer.append({})
             if i == 0:
@@ -239,8 +244,7 @@ class HanoverTagger:
         state = '<END>'
         for i in range(len(backpointer) - 1, 0, -1):
             state = backpointer[i][state]
-            if state.p1 != '<Upcase>':
-                tags.append(state.p1)
+            tags.append(state.p1)
 
         return tags[::-1]
         
@@ -264,7 +268,7 @@ class HanoverTagger:
         return lemma
     
     def relevant_morpheme(self,mtag,pos):
-        #verb suffixs belong to lemma in case a participle was turnes into an adjective!
+        #verb suffixs belong to lemma in case a participle was turned into an adjective!
         if pos == 'ADJA' or pos == 'ADJD':
             if mtag not in ['SUF_ADJ','ADJ_COMP','ADJ_SUP']:
                return True
@@ -320,15 +324,19 @@ class HanoverTagger:
             lemma = ''.join(lemma)
             return lemma, morphlist, pos
 
-            return morphemes, pos
 
+    def normalize(self,w):
+        if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
+           return '"'
+        else:
+           return w.lower()
         
-    def tag_word(self, word, cutoff=5,casesensitive = True):
+    def tag_word(self, word, cutoff=5,casesensitive = True, conditional = False):
         if casesensitive and word[0].isupper():
             upcase = True
         else:
             upcase = False
-        word = word.lower()
+        word = self.normalize(word)
         if word in self.cache:
             p_tags = self.cache[word]
             cached = True
@@ -340,12 +348,13 @@ class HanoverTagger:
         for tag,p in p_tags:
             if casesensitive:
                p += self.LP_case_t[tag][upcase]
-            p -= self.LP_wtag[tag]
+            if conditional:
+               p -= self.LP_wtag[tag] 
             p_w_tags.append((tag,p))
             
         p_w_tags.sort(key=lambda x: x[1], reverse=True)
 
-        if not cached:
+        if not cached: # and len(p_w_tags) > 0:
            if cutoff == 0:
                p_w_tags = [p_w_tags[0]]
            else:
@@ -374,6 +383,18 @@ class TrainHanoverTagger:
         self.sentdata = []
         self.stemdict = {}
 
+    def normalize_w(self,w):
+        if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
+           return '"'
+        else:
+           return w
+           
+    def normalize_m(self,morphemes): 
+        result = []
+        for (m,t) in morphemes:
+            result.append((self.normalize_w(m),t))
+        return result
+         
 
     def load(self, fin):
         sent = []
@@ -381,21 +402,21 @@ class TrainHanoverTagger:
         for line in fin:
             (sentnr, word, lemma, tag, morphemes, stemsub) = line.split('\t')
             morphemes = ast.literal_eval(morphemes)
+            word = self.normalize_w(word)
+            morphemes = self.normalize_m(morphemes)
             self.morphdata.append(morphemes)
             if int(sentnr) >= 0:
                 if sentnr != lastsentnr:
                     self.sentdata.append(sent)
                     sent = []
-                    lastsentnr = sentnr                   
+                    lastsentnr = sentnr   
                 sent.append((word,tag))
             if len(stemsub) > 5:
                 alttag, altstem, stem = ast.literal_eval(stemsub)
                 sd_tag = self.stemdict.get(alttag, {})
                 sd_tag[altstem] = stem
                 self.stemdict[alttag] = sd_tag
-            #wclset = self.wordclasses.get(word.lower(), set())
-            #wclset.add(tag)
-            #self.wordclasses[word.lower()] = wclset
+
 
 
     def collect_tag_freqs(self):
@@ -427,7 +448,7 @@ class TrainHanoverTagger:
         for len_s in range(3, -1, -1):
             for morphemes in self.morphdata:
                 for morph, t in morphemes:
-                    if self.N_m[morph] < 10 and len(morph) > len_s and not self.endswith_one_of(morph, exclude):
+                    if t in self.LP_hapax_t and self.N_m[morph] < 20 and len(morph) > len_s and not self.endswith_one_of(morph, exclude):
                         if len_s > 0:
                             suf = morph[-len_s:]
                         else:
@@ -464,7 +485,7 @@ class TrainHanoverTagger:
         p_len_t = {}
         for morphemes in self.morphdata:
             for m, t in morphemes:
-                if self.N_m[m] < 10 and not t.endswith('_IRR'):
+                if self.N_m[m] < 50 and not t.endswith('_IRR'):
                     l = min(len(m), 25)
                     n_l = p_len_t.get(t, Counter())
                     n_l.update([l])
@@ -490,12 +511,10 @@ class TrainHanoverTagger:
                 count_t.update([m])
                 count[t] = count_t
         p_hapax_t = {}
-        for t in ['NN','NE','ADJ','ADV','CARD','FM']: #count:
+        for t in ['NN','NE','ADJ','ADV','CARD','FM','VV']: #count:
             dist = Counter(count[t].values())
             if dist[1] > 0:
                 p_hapax_t[t] = math.log(dist[1] / self.N_t[t])
-            # else: #implicit
-            #    p_hapax_t[t] = -math.inf
         return p_hapax_t
 
     def transprob(self):
@@ -634,7 +653,7 @@ class TrainHanoverTagger:
                 t_pq = {}
                 for r in list(self.P_wtag.keys()):
                     t_pq[r] = round(math.log(
-                        weights[2] * self.P_trans_word_3.get(pq, {}).get(r, 0) + weights[1] * self.P_trans_word_2.get(q, {}).get(r, 0) + weights[0] * math.exp(self.P_wtag[r])), 4)
+                        weights[2] * self.P_trans_word_3.get(pq, {}).get(r, 0) + weights[1] * self.P_trans_word_2.get(q, {}).get(r, 0) + weights[0] * self.P_wtag[r]), 4)
 
                 p_trans[pq] = t_pq
 
@@ -673,7 +692,7 @@ class TrainHanoverTagger:
                 cache[w] = filtered
         return cache
     
-    def precompute_observed(self, tagger, nr):
+    def precompute_observed(self):
         words = Counter()
         lp_w_c = {}
         for c in self.LP_wtag:
@@ -692,30 +711,24 @@ class TrainHanoverTagger:
         cache = {}
         n = 0
         for w, f in words.most_common(): #(nr):
-            if f < 10:
+            if f < 3:
                break
             observed = []
             for tag in lp_w_c:
                if w in lp_w_c[tag]:
-                  p = lp_w_c[tag][w]
+                  p = lp_w_c[tag][w] + self.LP_wtag[tag] 
                   observed.append((tag,round(p, 4)))
             if len(observed) > 0:
                observed.sort(key=lambda x: x[1], reverse=True)
                cache[w] = observed
-        #for w, f in words.most_common(2 * nr)[nr:]:
-        #    computed = tagger.analyze_forward(w) 
-        #    error = 0
-        #    for (t,p) in computed:
-        #       if w in lp_w_c[t]:
-        #          print(w,t,round(p,2),round(lp_w_c[t][w],2), sep = '\t')
         return cache
 
     def train_morph_model(self):
         self.N_t = Counter([t for morphemes in self.morphdata for (morph, t) in morphemes])
         self.N_m, self.LP_t_m = self.collect_tag_freqs()
+        self.LP_hapax_t = self.hapaxprobs()
         self.LP_s_t = self.suffixprobs()
         self.LP_len_t = self.lenprobs()
-        self.LP_hapax_t = self.hapaxprobs()
         self.Int_t = self.intercept()
         self.LP_trans = self.transprob()
         self.LP_m_t = self.morphprobs()
@@ -729,14 +742,17 @@ class TrainHanoverTagger:
 
         
         
-    def train_model(self):
+    def train_model(self,observed_values=True):
         self.train_morph_model()
         self.train_sent_model()
         model = (
         self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
         self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, {})
         tagger = HanoverTagger(None, model)
-        self.cache = self.precompute(tagger, 2000)
+        if observed_values:
+            self.cache = self.precompute_observed()
+        else:
+            self.cache = self.precompute(tagger,2000)
 
     def write_model(self, filename):
         model = (
