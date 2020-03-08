@@ -121,6 +121,8 @@ class HanoverTagger:
                 results[pos] = lp
         results = list(results.items())
         results.sort(key=lambda x: x[1], reverse=True)
+        if len(results) == 0: #Occurs only in very very rare and strage cases, eg analyzing the empty string as word, or unknownwords with strict == True; Maybe better throw an exception...
+            results = [('UNKNOWN',0)]
         
         return results
 
@@ -184,13 +186,16 @@ class HanoverTagger:
         
 
         i = len(backpointer) - 1
-        states = [(beststate, i)]
-        state = beststate
-        while i > 0:
-            state, i = backpointer[i][state]
-            states.append((state, i))
-        states = states[:-1]
-
+        if beststate == "":
+            states = [(State(p2='UNKNOWN', p1='END_UNKNOWN'), i), (State(p2='START', p1='UNKNOWN'), i-1)]
+        else:       
+            states = [(beststate, i)]
+            state = beststate
+            while i > 0:
+                state, i = backpointer[i][state]
+                states.append((state, i))
+            states = states[:-1]
+      
         return [(state.p1, i) for (state, i) in states[::-1]]
 
     def tag_sent_viterbi(self, sent, casesensitive = True):
@@ -206,6 +211,8 @@ class HanoverTagger:
             elif casesensitive:
                cs = True
             wprobs = dict(self.tag_word(w,casesensitive=cs,conditional=True))
+            if len(wprobs) == 1 and 'UNKNOWN' in wprobs: #This should not occur but can result from erong settings
+               wprobs = {}
             row = {}
             backpointer.append({})
             if i == 0:
@@ -223,9 +230,12 @@ class HanoverTagger:
                     continue
                 lp_t = self.LP_trans_word[prev].items()
                 for c, lp_tc in lp_t:
-                    if c not in wprobs:
+                    if c not in wprobs and len(wprobs) > 0:
                         continue
-                    lpwc = wprobs[c]
+                    if len(wprobs) ==  0: #If the word is unknown anything goes
+                        lpwc = 0
+                    else:
+                        lpwc = wprobs[c]
                     lp = lp0 + lp_tc + lpwc
                     c2 = prev.p1
                     newstate = State(p2=c2, p1=c)
@@ -355,15 +365,16 @@ class HanoverTagger:
          
         p_w_tags = []
         for tag,p in p_tags:
-            if casesensitive:
-               p += self.LP_case_t[tag][upcase]
-            if conditional:
-               p -= self.LP_wtag[tag] 
+            if tag != 'UNKNOWN':
+               if casesensitive:
+                  p += self.LP_case_t[tag][upcase]
+               if conditional:
+                  p -= self.LP_wtag[tag] 
             p_w_tags.append((tag,p))
             
         p_w_tags.sort(key=lambda x: x[1], reverse=True)
 
-        if not cached: # and len(p_w_tags) > 0:
+        if not cached and len(p_w_tags) > 0:
            if cutoff == 0:
                p_w_tags = [p_w_tags[0]]
            else:
