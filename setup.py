@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="HanTa",
-    version="0.1.0",
+    version="0.1.1",
     author="Christian Wartena",
     author_email="Christian.Wartena@hs-hannover.de",
     description="Hannover Tagger: Morphological Analysis and POS Tagging",
