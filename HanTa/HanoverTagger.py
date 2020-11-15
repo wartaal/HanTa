@@ -211,7 +211,7 @@ class HanoverTagger:
             elif casesensitive:
                cs = True
             wprobs = dict(self.tag_word(w,casesensitive=cs,conditional=True))
-            if len(wprobs) == 1 and 'UNKNOWN' in wprobs: #This should not occur but can result from erong settings
+            if len(wprobs) == 1 and 'UNKNOWN' in wprobs: #This should not occur but can result from wrong settings
                wprobs = {}
             row = {}
             backpointer.append({})
@@ -231,6 +231,8 @@ class HanoverTagger:
                 lp_t = self.LP_trans_word[prev].items()
                 for c, lp_tc in lp_t:
                     if c not in wprobs and len(wprobs) > 0:
+                        continue
+                    if c == '<END>': #2020-11-11 We are not in the last row, so adding state <END> makes no sense
                         continue
                     if len(wprobs) ==  0: #If the word is unknown anything goes
                         lpwc = 0
