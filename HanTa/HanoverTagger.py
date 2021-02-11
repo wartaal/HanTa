@@ -1,19 +1,55 @@
 from collections import Counter, namedtuple
 import math
 from numpy import logaddexp
+from operator import itemgetter
 import pickle
 import gzip
 import ast
 import pprint
 import re
 import os
+import bisect
 
-State = namedtuple("State", ["p2", "p1"])
 
+EMPTY = 0
+START = 1
+END = 2
+UNKNOWN = 3
+END_UNKNOWN = -3
 
 class HanoverTagger:
+     
+    # For each final state colelct what states possibly can lead to this final state
+    # If we run the viterbi algorithm and we know the desired outcome, this speeds up the computation
+    # Since this is computed fast and used only for optimizing speed, this is not stored in the model
+    def reachable(self):
+        connections = []
+        for (_,c), followers in self.LP_trans.items():
+            for f in followers:
+                connections.append((c,f)) 
+        self.reachability = {} 
 
+        for c in self.int2tag.keys():
+            if c >= 0:
+                continue
+            states = []
+            for (a,b) in connections:
+                if b == c and a not in states:
+                    states.append(a)
+            i = 0
+            end = len(states)
+            while i < end:
+                d = states[i]
+                for (a,b) in connections:
+                    if b == d and a not in states:
+                        states.append(a)
+                        end+=1
+                i+=1
+            self.reachability[c] = states   
+        
+        
     def __init__(self, filename, model=None):
+        self.re_qmark = re.compile(r'^(`|``|´|´´|\'|\'\')$')
         if filename:
             if os.path.exists(filename):
                file = gzip.GzipFile(filename, 'rb')
@@ -31,43 +67,76 @@ class HanoverTagger:
             self.strict = True
         self._debug = False
         if model:
-            self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t, self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.cache = model
+            self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t, self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.cache = model
+        self.tag2int['EMPTY'] = EMPTY
+        self.tag2int['END'] = END
+        self.tag2int['UNKNOWN'] = UNKNOWN
+        self.tag2int['END_UNKNOWN'] = END_UNKNOWN
+        self.int2tag[EMPTY] = 'EMPTY'
+        self.int2tag[END] = 'END'
+        self.int2tag[UNKNOWN] = 'UNKNOWN'
+        self.int2tag[END_UNKNOWN] = 'END_UNKNOWN'
+        self.reachable()
 
-    def lp_m_t(self, m, t,wlen):
-        lp = -math.inf
-        if t in self.LP_m_t and m in self.LP_m_t[t]:
+
+    #log prob of a morpheme given a tag: p(m|t)
+    def  lp_m_t(self, m, t, wlen):
+  
+        #if t in self.LP_m_t:
+        if m in self.LP_m_t[t]:
             lp = self.LP_m_t[t][m]
-        #elif not self.strict and m not in self.N_m and t in self.LP_len_t and t in self.LP_s_t and t in self.LP_hapax_t:
-        elif not self.strict and t in self.LP_len_t and t in self.LP_s_t and t in self.LP_hapax_t and (wlen < 4 or len(m) > 2): 
-            if len(m) > 3 and m[-3:] in self.LP_s_t[t]:
-                lp_suf = self.LP_s_t[t][m[-3:]]
-            elif len(m) > 2 and m[-2:] in self.LP_s_t[t]:
-                lp_suf = self.LP_s_t[t][m[-2:]]
-            elif len(m) > 2 and m[-1:] in self.LP_s_t[t]:
-                lp_suf = self.LP_s_t[t][m[-1:]]
+        elif not self.strict and t in self.LP_s_t and t in self.LP_hapax_t:
+            mlen = len(m)
+            if (wlen < 4 or mlen > 2): 
+                if mlen > 3 and m[-3:] in self.LP_s_t[t]:
+                    lp_suf = self.LP_s_t[t][m[-3:]]
+                elif mlen > 2 and m[-2:] in self.LP_s_t[t]:
+                    lp_suf = self.LP_s_t[t][m[-2:]]
+                elif mlen > 2 and m[-1:] in self.LP_s_t[t]:
+                    lp_suf = self.LP_s_t[t][m[-1:]]
+                else:
+                    lp_suf = self.LP_s_t[t]['']
+                lp = self.Int_t + self.LP_hapax_t[t] + self.LP_len_t[t][min(mlen, 24)] + lp_suf
             else:
-                lp_suf = self.LP_s_t[t]['']
-            lp = self.Int_t + self.LP_hapax_t[t] + self.LP_len_t[t][min(len(m), 24)] + lp_suf
+                lp = -math.inf
+        else:
+           lp = -math.inf
+        #else:
+        #    lp = -math.inf
 
         return lp
 
-    def lp_trans(self, state, final=False):
+    #log prob of a transition
+    #All values are stored in the model but here we return all possible following states (and their probabilities)
+    #and already filter whether it should be a final state or not
+    def  lp_trans(self, state, final=False):
+            
         if state in self.LP_trans:
             if final:
-                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag.startswith('END_')]
+                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag < 0]
             else:
-                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if not tag.startswith('END_')]
+                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag > 0]
         else:
             following = []
         return following
+    
 
+    #Run the forward algorithm over the HMM
+    #In fact this is not the forward algorithm but the Viterbi algorithm
+    #This method is intended to give the probability for each part of speech. Thus if there
+    #are two possibilities to arrive at a certain (final) state,we should sum up the probabilities, i.e. 
+    #use the forward algorithm. However, in almost all such cases the less likely path is a spurious 
+    #one and the results get better if we take the maximum as in the Viterbi algorithm.
+    #Nevertheless, in the end probabilities for each POS are given, no paths.
     def analyze_forward(self, word): 
+    
         lowerbound = -1e6
         table = []
-        for i in range(len(word) + 2):
+        wlen = len(word)
+        for i in range(wlen + 2):
             table.append({})
-        table[0][State(p2=None, p1='START')] = 0
-        for i in range(len(word) + 1):
+        table[0][(EMPTY, START)] = 0
+        for i in range(wlen + 1):
             row = table[i]
             # Only continue with 3 top states
             if len(row) > 3:
@@ -79,13 +148,15 @@ class HanoverTagger:
                 if lp < rowbound:
                     continue
                 followup = self.lp_trans(state, final=False)
-                for j in range(i + 1, len(word) + 1):
-                    morpheme = word[i:j]
+
+                for j in range(i + 1, wlen + 1):
+                    #morpheme = word[i:j]
                     for tag1, lpt in followup:
-                        lp1 = lp + lpt + self.lp_m_t(morpheme, tag1,len(word))
+                        #lp1 = lp + lpt + self.lp_m_t(morpheme, tag1,len(word))
+                        lp1 = lp + lpt + self.lp_m_t(word[i:j], tag1,wlen)
                         if lp1 > lowerbound:
-                            tag2 = state.p1
-                            newstate = State(p2=tag2, p1=tag1)
+                            #tag2 = state[1]
+                            newstate = (state[1], tag1)
                             if newstate not in table[j] or lp1 > table[j][newstate]:
                                  table[j][newstate] = lp1
                             #if newstate in table[j]:
@@ -98,8 +169,8 @@ class HanoverTagger:
             for tag1, lpt in self.lp_trans(state, final=True):
                 lp1 = lp + lpt
                 if lp1 > lowerbound:
-                    tag2 = state.p1
-                    newstate = State(p2=tag2, p1=tag1)
+                    #tag2 = state[1]
+                    newstate = (state[1], tag1)
                     if newstate not in table[-1] or lp1 > table[-1][newstate]:
                         table[-1][newstate] = lp1
                     #if newstate in table[-1]:
@@ -107,87 +178,107 @@ class HanoverTagger:
                     #else:
                     #    table[-1][newstate] = lp1
 
-        if self._debug:
-            pprint.pprint(table)
+        #if self._debug:
+        #pprint.pprint(table)
         results = {}
         for state in table[-1]:
             lp = table[-1][state]
             if lp == -math.inf:
                 continue
-            pos = state.p1[4:]
+            #pos = self.int2tag[-state[1]]
+            pos = -state[1]
             if pos in results:
                 results[pos] = logaddexp(results[pos], lp) # TODO Maximum!!!
             else:
                 results[pos] = lp
-        results = list(results.items())
-        results.sort(key=lambda x: x[1], reverse=True)
-        if len(results) == 0: #Occurs only in very very rare and strage cases, eg analyzing the empty string as word, or unknownwords with strict == True; Maybe better throw an exception...
-            results = [('UNKNOWN',0)]
+        result_list = list(results.items())
+        #result_list.sort(key=lambda x: x[1], reverse=True)
+        result_list.sort(key=itemgetter(1), reverse=True)
+        if len(result_list) == 0: #Occurs only in very very rare and strange cases, eg analyzing the empty string as word, or unknownwords with strict == True; Maybe better throw an exception...
+            result_list = [(UNKNOWN,0)]
         
-        return results
+        return result_list
 
+
+    #The following method is similar to the previous one. Now a backpointer is maintained and the
+    #most likely path for each POS is returned.
+    #This method can be called from outside to analyze a word, or it is calles to generate a lemma
+    #after POS Tagging of the sentence. Now the desired POS is alread known and we use onle states that
+    #can lead to this POS
     def analyze_viterbi(self, word, pos):
+        wlen = len(word)
         lowerbound = -1e6
-        table = []
-        backpointer = []
-        for i in range(len(word) + 2):
-            table.append({})
-            backpointer.append({})
-        table[0][State(p2=None, p1='START')] = 0
-        for i in range(len(word) + 1):
-            row = table[i]
-            # Only continue with 3 top states
-            if len(row) > 3:
-                rowbound = sorted(row.values(), reverse=True)[3] - 1
-            else:
-                rowbound = lowerbound
-            for state in row:
-                lp = row[state]
-                if lp < rowbound:
-                    continue
-                followup = self.lp_trans(state, final=False)
-                for j in range(i + 1, len(word) + 1):
-                    morpheme = word[i:j]
-                    for tag1, lpt in followup:
-                        lp1 = lp + lpt + self.lp_m_t(morpheme, tag1, len(word))
-                        tag2 = state.p1
-                        newstate = State(p2=tag2, p1=tag1)
-                        if lp1 > table[j].get(newstate, lowerbound):
-                            table[j][newstate] = lp1
-                            backpointer[j][newstate] = (state, i)
+        
+        if pos != EMPTY:
+            #In case a target POS is given, we have to run the algorithm again without the target
+            #if no path was found
+            targets = [pos,EMPTY]
+        else:
+            targets = [EMPTY]  
+        
+        for targetpos in targets:             
+            table = []
+            backpointer = []       
 
-        for state in table[-2]:
-            lp = table[-2][state]
-            for tag1, lpt in self.lp_trans(state, final=True):
-                lp1 = lp + lpt
-                tag2 = state.p1
-                newstate = State(p2=tag2, p1=tag1)
-                if lp1 > table[-1].get(newstate, lowerbound):
-                    table[-1][newstate] = lp1
-                    backpointer[-1][newstate] = (state, len(word))
+            for i in range(wlen + 2):
+                table.append({})
+                backpointer.append({})
+                
+            table[0][(EMPTY,START)] = 0
+            for i in range(wlen + 1):
+                row = table[i]
+                # Only continue with 3 top states
+                if len(row) > 3:
+                    rowbound = sorted(row.values(), reverse=True)[3] - 1
+                else:
+                    rowbound = lowerbound
+                for state in row:
+                    lp = row[state]
+                    if lp < rowbound:
+                        continue
+                    followup = self.lp_trans(state, final=False)
+                    for j in range(i + 1, wlen + 1):
+                        #morpheme = word[i:j]
+                        for tag1, lpt in followup:
+                            if targetpos == EMPTY or tag1 in self.reachability[targetpos]: 
+                                #lp1 = lp + lpt + self.lp_m_t(morpheme, tag1, len(word))
+                                lp1 = lp + lpt + self.lp_m_t(word[i:j], tag1, wlen)
+                                if lp1 > lowerbound:
+                                    #tag2 = state[1]
+                                    newstate = (state[1], tag1)
+                                    if newstate not in table[j] or lp1 > table[j][newstate]:
+                                        table[j][newstate] = lp1
+                                        backpointer[j][newstate] = (state, i)
 
-        if self._debug:
-            pprint.pprint(table)
+  
+            for state in table[-2]:
+                lp = table[-2][state]
+                for tag1, lpt in self.lp_trans(state, final=True):
+                    if targetpos == EMPTY or targetpos == tag1: 
+                       lp1 = lp + lpt
+                       if lp1 > lowerbound:
+                           #tag2 = state[1]
+                           newstate = (state[1], tag1)
+                           if newstate not in table[-1] or lp1 > table[-1][newstate]:
+                               table[-1][newstate] = lp1
+                               backpointer[-1][newstate] = (state, wlen)
+            if len(table[-1]) > 0:
+                break #Only if the last row is empty we need a second try without the original target
+        #if self._debug:
+        #pprint.pprint(table)
+     
             
         pmax = -math.inf
-        beststate = ""
+        beststate = (EMPTY,EMPTY)
         for state in table[-1]:
             lp = table[-1][state]
-            if lp > pmax and (pos == None or pos == state.p1):
+            if lp > pmax: 
                 pmax = lp
                 beststate = state
-        #if pos not in the table...        
-        if pmax == -math.inf:
-            for state in table[-1]:
-               lp = table[-1][state]
-               if lp > pmax:
-                  pmax = lp
-                  beststate = state
-        
 
         i = len(backpointer) - 1
-        if beststate == "":
-            states = [(State(p2='UNKNOWN', p1='END_UNKNOWN'), i), (State(p2='START', p1='UNKNOWN'), i-1)]
+        if beststate == (EMPTY,EMPTY):
+            states = [((UNKNOWN, END_UNKNOWN), i), ((START, UNKNOWN), i-1)]
         else:       
             states = [(beststate, i)]
             state = beststate
@@ -196,13 +287,16 @@ class HanoverTagger:
                 states.append((state, i))
             states = states[:-1]
       
-        return [(state.p1, i) for (state, i) in states[::-1]]
+        return [(state[1], i) for (state, i) in states[::-1]]
 
+    # Viterbi algorith now running over a sentnec instead over morphemes.
+    #This is much simple since we have boundaries between the words.
     def tag_sent_viterbi(self, sent, casesensitive = True):
+
         lowerbound = -1e6
         table = []
         backpointer = []
-
+        
         for i in range(len(sent)):
             w = sent[i]
 
@@ -210,13 +304,13 @@ class HanoverTagger:
                cs = False
             elif casesensitive:
                cs = True
-            wprobs = dict(self.tag_word(w,casesensitive=cs,conditional=True))
-            if len(wprobs) == 1 and 'UNKNOWN' in wprobs: #This should not occur but can result from wrong settings
+            wprobs = dict(self._tag_word(w,cutoff = 5, casesensitive=cs,conditional=True))
+            if len(wprobs) == 1 and UNKNOWN in wprobs: #This should not occur but can result from wrong settings
                wprobs = {}
             row = {}
             backpointer.append({})
             if i == 0:
-                prevrow = {State(p2=None, p1='<Start>'): 0.0}
+                prevrow = {(EMPTY, START): 0.0}
             else:
                 prevrow = table[i - 1]
             # Only continue with 5 top states
@@ -224,58 +318,62 @@ class HanoverTagger:
                 rowbound = sorted(prevrow.values(), reverse=True)[5] - 1
             else:
                 rowbound = lowerbound
-            for prev in prevrow:
-                lp0 = prevrow[prev]
+            for state in prevrow:
+                lp0 = prevrow[state]
                 if lp0 < rowbound:
                     continue
-                lp_t = self.LP_trans_word[prev].items()
-                for c, lp_tc in lp_t:
+                lp_t = self.LP_trans_word[state] #.items()
+                for c, lp_tc in lp_t.items():
                     if c not in wprobs and len(wprobs) > 0:
                         continue
-                    if c == '<END>': #2020-11-11 We are not in the last row, so adding state <END> makes no sense
+                    if c == END: #2020-11-11 We are not in the last row, so adding state <END> makes no sense
                         continue
                     if len(wprobs) ==  0: #If the word is unknown anything goes
                         lpwc = 0
                     else:
                         lpwc = wprobs[c]
                     lp = lp0 + lp_tc + lpwc
-                    c2 = prev.p1
-                    newstate = State(p2=c2, p1=c)
-                    if lp > row.get(newstate, lowerbound):
-                        row[newstate] = lp
-                        backpointer[i][newstate] = prev
+                    #c2 = prev[1]
+                    if lp > lowerbound:
+                        newstate = (state[1], c)
+                        if newstate not in row or lp > row[newstate]:
+                            row[newstate] = lp
+                            backpointer[i][newstate] = state
+
             table.append(row)
+        
         # last row
+        finalstate = (END,EMPTY)
         prevrow = table[-1]
         row = {}
         backpointer.append({})
-        for prev in prevrow:
-            lp0 = prevrow[prev]
-            lp_t = dict(self.LP_trans_word[prev])
-            lp = lp0 + lp_t.get('<END>', -math.inf)
-            if lp > row.get('<END>', -math.inf):
-                row['<END>'] = lp
-                backpointer[-1]['<END>'] = prev
+        for state in prevrow:
+            lp0 = prevrow[state]
+            lp_t = dict(self.LP_trans_word[state])
+            lp = lp0 + lp_t.get(END, -math.inf)
+            if lp > row.get(finalstate, -math.inf):
+                row[finalstate] = lp
+                backpointer[-1][finalstate] = state
         table.append(row)
 
-        if self._debug:
-            pprint.pprint(table)
+        #if self._debug:
+        #pprint.pprint(table)
 
         tags = []
-        state = '<END>'
+        state = finalstate
         for i in range(len(backpointer) - 1, 0, -1):
             state = backpointer[i][state]
-            tags.append(state.p1)
+            tags.append(state[1])
 
         return tags[::-1]
         
+    #This is the most problematic unction in the class, since it is language dependend
+    #In some way this has to be abstracte and put into the model....
     def makelemma(self,stem_morphemes,pos):
         lemma = ''.join(stem_morphemes)
         if pos[0] == 'V':
-           #if lemma[-1] in 'aeo':
-           #     lemma = lemma + 'n'
-           #el
-           ## Betonung muss berücksichtigt werden: beschwerEn !
+           ## Betonung muss berücksichtigt werden: beschwerEn vs ärgern, basteln!
+           ## be+schwer --> einsilbig
            if lemma.endswith('tu') or lemma.endswith('sei'):
                 lemma = lemma + 'n'
            elif (lemma.endswith('el') or lemma.endswith('er')) and lemma[-3] not in 'ui':
@@ -288,7 +386,9 @@ class HanoverTagger:
            lemma = '--'
         return lemma
     
-    def relevant_morpheme(self,mtag,pos):
+    #Same problem as above
+    #Tells whether a morpheme is part of the stem or not
+    def relevant_morpheme(self, mtag, pos):
         #verb suffixs belong to lemma in case a participle was turned into an adjective!
         if pos == 'ADJA' or pos == 'ADJD':
             if mtag not in ['SUF_ADJ','ADJ_COMP','ADJ_SUP']:
@@ -298,61 +398,70 @@ class HanoverTagger:
         elif pos == 'PTKZU':
             return True
         else:
-            if not mtag.startswith('SUF') and  mtag not in ['PREF_PP','PTKZU']:
+            if not mtag[:3] == 'SUF' and  mtag not in ['PREF_PP','PTKZU']:
                return True
             else:
                return False
     
-
-    def analyze(self, word, pos=None, taglevel=1):
+    def analyze(self, word, pos='EMPTY', taglevel=1):
+       return self._analyze(word,self.tag2int.get(pos,EMPTY),taglevel)
+    
+    def _analyze(self, word,  pos=EMPTY, taglevel=1):           
         word = word.lower()
-        if pos:
-            pos = 'END_' + pos
-        morphemes = self.analyze_viterbi(word, pos)
-        pos = morphemes[-1][0][4:]
+        postag = -pos
+            
+        morphemes = self.analyze_viterbi(word, postag)
+        postag = -morphemes[-1][0]
 
         if taglevel == 0:
-            return pos
+            return self.int2tag[postag]
         elif taglevel == 1 or taglevel == 2:
             start = 0
-            lemma = []
+            lemmacomponents = []
             for (tag, end) in morphemes:
-                if start < end and self.relevant_morpheme(tag,pos): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:
+                if start < end and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:
                     morpheme = word[start:end]
                     if tag in self.stemdict:
                         morpheme = self.stemdict[tag].get(morpheme, morpheme)
                     if len(morpheme) > 0:
-                        lemma.append(morpheme)
+                        lemmacomponents.append(morpheme)
                 start = end
             if taglevel == 1:
-                lemma = self.makelemma(lemma,pos)
+                lemma = self.makelemma(lemmacomponents,self.int2tag[postag])
             elif taglevel == 2:
-                lemma = '+'.join(lemma)
-            return lemma, pos
+                lemma = '+'.join(lemmacomponents)
+            return lemma, self.int2tag[postag]
         else:
             start = 0
             morphlist = []
-            lemma = []
+            lemmacomponents = []
             for (tag, end) in morphemes:
-                if not tag.startswith('END'):
+                if tag > 0:
                     morpheme = word[start:end]
-                    morphlist.append((morpheme, tag))
-                    if start < end and self.relevant_morpheme(tag,pos): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:                     
+                    morphlist.append((morpheme, self.int2tag[tag]))
+                    if start < end and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:                     
                         if tag in self.stemdict:
                             morpheme = self.stemdict[tag].get(morpheme, morpheme)
-                        lemma.append(morpheme)
+                        lemmacomponents.append(morpheme)
                 start = end
-            lemma = ''.join(lemma)
-            return lemma, morphlist, pos
+            lemma = ''.join(lemmacomponents)
+            return lemma, morphlist, self.int2tag[postag]
 
 
-    def normalize(self,w):
-        if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
+    def  normalize(self, w):
+        #if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
+        if self.re_qmark.match(w):
            return '"'
         else:
            return w.lower()
-        
-    def tag_word(self, word, cutoff=5,casesensitive = True, conditional = False):
+
+    def tag_word(self, word, cutoff=5, casesensitive = True):
+        tags = self._tag_word(word, cutoff, casesensitive)   
+        return [(self.int2tag[t],p) for (t,p) in tags]
+         
+      
+    def _tag_word(self, word, cutoff=5, casesensitive = True, conditional = False):
+            
         if casesensitive and word[0].isupper():
             upcase = True
         else:
@@ -367,14 +476,15 @@ class HanoverTagger:
          
         p_w_tags = []
         for tag,p in p_tags:
-            if tag != 'UNKNOWN':
+            if tag != UNKNOWN:
                if casesensitive:
                   p += self.LP_case_t[tag][upcase]
                if conditional:
                   p -= self.LP_wtag[tag] 
             p_w_tags.append((tag,p))
             
-        p_w_tags.sort(key=lambda x: x[1], reverse=True)
+        #p_w_tags.sort(key=lambda x: x[1], reverse=True)
+        p_w_tags.sort(key=itemgetter(1), reverse=True)
 
         if not cached and len(p_w_tags) > 0:
            if cutoff == 0:
@@ -387,15 +497,17 @@ class HanoverTagger:
         return p_w_tags
 
     def tag_sent(self, sent, taglevel=1, casesensitive = True):
+        if len(sent) == 0:
+            return []
         tags = self.tag_sent_viterbi(sent,casesensitive)
         if taglevel == 0:
-            return tags
+            return [self.int2tag[t] for t in tags]
         elif taglevel == 1:
-            return [(sent[i], self.analyze(sent[i], tags[i], taglevel=1)[0], tags[i]) for i in range(len(sent))]
+            return [(sent[i], self._analyze(sent[i], tags[i], taglevel=1)[0], self.int2tag[tags[i]]) for i in range(len(sent))]
         elif taglevel == 2:
-            return [(sent[i], self.analyze(sent[i], tags[i], taglevel=2)[0], tags[i]) for i in range(len(sent))]
+            return [(sent[i], self._analyze(sent[i], tags[i], taglevel=2)[0], self.int2tag[tags[i]]) for i in range(len(sent))]
         else:
-            return [(sent[i], *self.analyze(sent[i], tags[i], taglevel=3)) for i in range(len(sent))]
+            return [(sent[i], *self._analyze(sent[i], tags[i], taglevel=3)) for i in range(len(sent))]
 
 
 class TrainHanoverTagger:
@@ -404,6 +516,9 @@ class TrainHanoverTagger:
         self.morphdata = []
         self.sentdata = []
         self.stemdict = {}
+        self.tag2int = {}
+        self.int2tag = {}
+        self.tagnr = 10
 
     def normalize_w(self,w):
         if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
@@ -413,16 +528,39 @@ class TrainHanoverTagger:
            
     def normalize_m(self,morphemes): 
         result = []
-        for (m,t) in morphemes:
-            result.append((self.normalize_w(m),t))
+        for (m,s_tag) in morphemes:
+            tag = self.gettagnr(s_tag)
+            result.append((self.normalize_w(m),tag))
         return result
          
+    def gettagnr(self, tagstr):
+        if tagstr in self.tag2int:
+            return self.tag2int[tagstr]
+        if tagstr.startswith('END_'):
+            maintag = tagstr[4:]
+            if maintag in self.tag2int:
+                nr = -self.tag2int[maintag]
+                self.int2tag[nr] = tagstr
+                self.tag2int[tagstr] = nr
+            else:
+                self.tagnr += 1
+                self.tag2int[maintag] = self.tagnr 
+                self.int2tag[self.tagnr] = maintag
+                nr = -self.tagnr 
+                self.tag2int[tagstr] = nr
+                self.int2tag[nr] = tagstr
+            return nr
+        self.tagnr += 1
+        self.tag2int[tagstr] = self.tagnr
+        self.int2tag[self.tagnr] = tagstr
+        return self.tagnr
 
     def load(self, fin):
         sent = []
         lastsentnr = 1
         for line in fin:
-            (sentnr, word, lemma, tag, morphemes, stemsub) = line.split('\t')
+            (sentnr, word, lemma, s_tag, morphemes, stemsub) = line.split('\t')
+            tag = self.gettagnr(s_tag)
             morphemes = ast.literal_eval(morphemes)
             word = self.normalize_w(word)
             morphemes = self.normalize_m(morphemes)
@@ -434,11 +572,14 @@ class TrainHanoverTagger:
                     lastsentnr = sentnr   
                 sent.append((word,tag))
             if len(stemsub) > 5:
-                alttag, altstem, stem = ast.literal_eval(stemsub)
+                s_alttag, altstem, stem = ast.literal_eval(stemsub)
+                alttag = self.gettagnr(s_alttag)
                 sd_tag = self.stemdict.get(alttag, {})
                 sd_tag[altstem] = stem
                 self.stemdict[alttag] = sd_tag
 
+        #print(self.int2tag)
+        #print(self.tag2int)
 
 
     def collect_tag_freqs(self):
@@ -507,7 +648,8 @@ class TrainHanoverTagger:
         p_len_t = {}
         for morphemes in self.morphdata:
             for m, t in morphemes:
-                if self.N_m[m] < 50 and not t.endswith('_IRR'):
+                t_name = self.int2tag[t]
+                if self.N_m[m] < 50 and not (len(t_name) > 4 and t_name[-4:] == '_IRR'):
                     l = min(len(m), 25)
                     n_l = p_len_t.get(t, Counter())
                     n_l.update([l])
@@ -533,7 +675,8 @@ class TrainHanoverTagger:
                 count_t.update([m])
                 count[t] = count_t
         p_hapax_t = {}
-        for t in ['NN','NE','ADJ','ADV','CARD','FM','VV']: #count:
+        openclass = [self.tag2int[t] for t in ['NN','NE','ADJ','ADV','CARD','FM','VV']]
+        for t in openclass: #count:
             dist = Counter(count[t].values())
             if dist[1] > 0:
                 p_hapax_t[t] = math.log(dist[1] / self.N_t[t])
@@ -542,10 +685,10 @@ class TrainHanoverTagger:
     def transprob(self):
         p_trans = {}
         for word in self.morphdata:
-            posseq = ['START'] + [t for m, t in word]
+            posseq = [START] + [t for m, t in word]
             p = posseq[1]
             p_1 = posseq[0]
-            prev = State(p2=None, p1=p_1)
+            prev = (EMPTY, p_1)
             n_prev = p_trans.get(prev, {})
             n_prev[p] = 1 + n_prev.get(p, 0)
             p_trans[prev] = n_prev
@@ -553,7 +696,7 @@ class TrainHanoverTagger:
                 p = posseq[i]
                 p_1 = posseq[i - 1]
                 p_2 = posseq[i - 2]
-                prev = State(p2=p_2, p1=p_1)
+                prev = (p_2, p_1)
                 n_prev = p_trans.get(prev, {})
                 n_prev[p] = 1 + n_prev.get(p, 0)
                 p_trans[prev] = n_prev
@@ -614,8 +757,8 @@ class TrainHanoverTagger:
         for p in p_t:
             lp_t[p] = math.log(p_t[p] / total)
             
-        p_t['<END>'] = len(self.sentdata)
-        total += p_t['<END>']
+        p_t[END] = len(self.sentdata)
+        total += p_t[END]
         for p in p_t:
             p_t[p] = p_t[p] / total
             
@@ -624,7 +767,7 @@ class TrainHanoverTagger:
     def transprob_word_2(self):
         p_trans = {}
         for sent in self.sentdata:
-            posseq = ['<Start>'] + [tag for (word,tag) in sent] + ['<END>']
+            posseq = [START] + [tag for (word,tag) in sent] + [END]
             for i in range(len(posseq) - 1):
                 p = posseq[i]
                 q = posseq[i + 1]
@@ -640,10 +783,10 @@ class TrainHanoverTagger:
     def transprob_word_3(self):
         p_trans = {}
         for sent in self.sentdata:
-            posseq = ['<Start>'] + [tag for (word,tag) in sent] + ['<END>']
+            posseq = [START] + [tag for (word,tag) in sent] + [END]
             p = posseq[1]
             p_1 = posseq[0]
-            prev = State(p2=None, p1=p_1)
+            prev = (EMPTY, p_1)
             n_prev = p_trans.get(prev, {})
             n_prev[p] = 1 + n_prev.get(p, 0)
             p_trans[prev] = n_prev
@@ -651,7 +794,7 @@ class TrainHanoverTagger:
                 p = posseq[i]
                 p_1 = posseq[i - 1]
                 p_2 = posseq[i - 2]
-                prev = State(p2=p_2, p1=p_1)
+                prev = (p_2, p_1)
                 n_prev = p_trans.get(prev, {})
                 n_prev[p] = 1 + n_prev.get(p, 0)
                 p_trans[prev] = n_prev
@@ -665,13 +808,15 @@ class TrainHanoverTagger:
 
     def mixture(self,weights):
         p_trans = {}
-        for p in list(self.P_wtag.keys()) + [None, '<Start>']:
+        for p in list(self.P_wtag.keys()) + [EMPTY, START]:
             if p == '<END>':
                 continue
-            for q in list(self.P_wtag.keys()) + ['<Start>']:
-                if q == '<END>':
+            for q in list(self.P_wtag.keys()) + [START]:
+                if q == END:
+                    continue 
+                if q == START and p != EMPTY:
                     continue
-                pq = State(p2=p, p1=q)
+                pq = (p, q)
                 t_pq = {}
                 for r in list(self.P_wtag.keys()):
                     t_pq[r] = round(math.log(
@@ -679,7 +824,7 @@ class TrainHanoverTagger:
 
                 p_trans[pq] = t_pq
 
-        return p_trans
+        return p_trans 
     
 
     def precompute(self, tagger, nr):
@@ -741,7 +886,8 @@ class TrainHanoverTagger:
                   p = lp_w_c[tag][w] + self.LP_wtag[tag] 
                   observed.append((tag,round(p, 4)))
             if len(observed) > 0:
-               observed.sort(key=lambda x: x[1], reverse=True)
+               #observed.sort(key=lambda x: x[1], reverse=True)
+               observed.sort(key=itemgetter(1), reverse=True)
                cache[w] = observed
         return cache
 
@@ -768,7 +914,7 @@ class TrainHanoverTagger:
         self.train_morph_model()
         self.train_sent_model()
         model = (
-        self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
+        self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
         self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, {})
         tagger = HanoverTagger(None, model)
         if observed_values:
@@ -778,7 +924,7 @@ class TrainHanoverTagger:
 
     def write_model(self, filename):
         model = (
-        self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
+        self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
         self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.cache)
 
         file = gzip.GzipFile(filename, 'wb')
