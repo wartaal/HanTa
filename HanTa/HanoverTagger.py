@@ -47,6 +47,10 @@ class HanoverTagger:
                 i+=1
             self.reachability[c] = states   
         
+    #Find classes that are not analzable, i.e. classes that can only be reached from the start en only can be followed by an end node
+    def atomic(self):
+        self.atomic_class = [c for c in self.reachability if len(self.reachability[c]) == 2] 
+ 
         
     def __init__(self, filename, model=None):
         self.re_qmark = re.compile(r'^(`|``|´|´´|\'|\'\')$')
@@ -77,6 +81,7 @@ class HanoverTagger:
         self.int2tag[UNKNOWN] = 'UNKNOWN'
         self.int2tag[END_UNKNOWN] = 'END_UNKNOWN'
         self.reachable()
+        self.atomic()
 
 
     #log prob of a morpheme given a tag: p(m|t)
@@ -97,6 +102,8 @@ class HanoverTagger:
                 else:
                     lp_suf = self.LP_s_t[t]['']
                 lp = self.Int_t + self.LP_hapax_t[t] + self.LP_len_t[t][min(mlen, 24)] + lp_suf
+                if wlen == mlen: #CW 20220616 penalize analysis that assumes the whole word is one large unknown morpheme
+                    lp -= 4.6
             else:
                 lp = -math.inf
         else:
@@ -178,8 +185,8 @@ class HanoverTagger:
                     #else:
                     #    table[-1][newstate] = lp1
 
-        #if self._debug:
-        #pprint.pprint(table)
+        if self._debug:
+            pprint.pprint(table)
         results = {}
         for state in table[-1]:
             lp = table[-1][state]
@@ -202,8 +209,8 @@ class HanoverTagger:
 
     #The following method is similar to the previous one. Now a backpointer is maintained and the
     #most likely path for each POS is returned.
-    #This method can be called from outside to analyze a word, or it is calles to generate a lemma
-    #after POS Tagging of the sentence. Now the desired POS is alread known and we use onle states that
+    #This method can be called from outside to analyze a word, or it is called to generate a lemma
+    #after POS Tagging of the sentence. Now the desired POS is alread known and we use only states that
     #can lead to this POS
     def analyze_viterbi(self, word, pos):
         wlen = len(word)
@@ -264,8 +271,8 @@ class HanoverTagger:
                                backpointer[-1][newstate] = (state, wlen)
             if len(table[-1]) > 0:
                 break #Only if the last row is empty we need a second try without the original target
-        #if self._debug:
-        #pprint.pprint(table)
+        if self._debug:
+            pprint.pprint(table)
      
             
         pmax = -math.inf
@@ -289,8 +296,8 @@ class HanoverTagger:
       
         return [(state[1], i) for (state, i) in states[::-1]]
 
-    # Viterbi algorith now running over a sentnec instead over morphemes.
-    #This is much simple since we have boundaries between the words.
+    #Viterbi algorith now running over a sentence instead of over morphemes.
+    #This is much simpler since we have boundaries between the words.
     def tag_sent_viterbi(self, sent, casesensitive = True):
 
         lowerbound = -1e6
@@ -356,8 +363,8 @@ class HanoverTagger:
                 backpointer[-1][finalstate] = state
         table.append(row)
 
-        #if self._debug:
-        #pprint.pprint(table)
+        if self._debug:
+            pprint.pprint(table)
 
         tags = []
         state = finalstate
@@ -367,12 +374,13 @@ class HanoverTagger:
 
         return tags[::-1]
         
-    #This is the most problematic unction in the class, since it is language dependend
-    #In some way this has to be abstracte and put into the model....
-    def makelemma(self,stem_morphemes,pos):
-        lemma = ''.join(stem_morphemes)
+    #This is the most problematic function in the class, since it is language dependend
+    #In some way this has to be abstracted and put into the model....
+    def makelemma(self,stem_morphemes,pos,upcase):
+        #lemma = ''.join(stem_morphemes)
+        lemma = self.makestem(stem_morphemes,pos)
         if pos[0] == 'V':
-           ## Betonung muss berücksichtigt werden: beschwerEn vs ärgern, basteln!
+           ## Betonung muss berücksichtigt werden: beschweren vs ärgern, basteln!
            ## be+schwer --> einsilbig
            if lemma.endswith('tu') or lemma.endswith('sei'):
                 lemma = lemma + 'n'
@@ -382,9 +390,25 @@ class HanoverTagger:
                 lemma = lemma + 'en'
         elif pos == 'NN' or pos == 'NE':
            lemma = lemma[0].upper() + lemma[1:]
+        elif pos == 'ADJA' and stem_morphemes[-1] == 'er' and upcase:
+           lemma = lemma[0].upper() + lemma[1:]
         elif pos[0] == '$':
            lemma = '--'
         return lemma
+       
+    #Same problem as above       
+    def makestem(self,stem_morphemes,pos):
+        stem = ""
+        varpos = [i for i in range(len(stem_morphemes)) if len(stem_morphemes[i]) == 2]
+        for i in range(len(stem_morphemes)):
+            m = stem_morphemes[i]
+            if len(m) == 1:
+               stem += m[0]
+            elif i == varpos[-1] and (pos != 'NN'  or i > len(stem_morphemes) - 3):
+               stem += m[0]
+            else:
+               stem += m[1]
+        return stem
     
     #Same problem as above
     #Tells whether a morpheme is part of the stem or not
@@ -406,11 +430,20 @@ class HanoverTagger:
     def analyze(self, word, pos='EMPTY', taglevel=1):
        return self._analyze(word,self.tag2int.get(pos,EMPTY),taglevel)
     
-    def _analyze(self, word,  pos=EMPTY, taglevel=1):           
+    def _analyze(self, word,  pos=EMPTY, taglevel=1):  
+        if word[0].isupper():
+            upcase = True
+        else:
+            upcase = False        
         word = word.lower()
         postag = -pos
-            
-        morphemes = self.analyze_viterbi(word, postag)
+        
+        if postag in self.atomic_class:
+            wlen = len(word)
+            morphemes = [(pos,wlen),(postag,wlen+1)]
+        else:        
+            morphemes = self.analyze_viterbi(word, postag)
+        
         postag = -morphemes[-1][0]
 
         if taglevel == 0:
@@ -419,17 +452,23 @@ class HanoverTagger:
             start = 0
             lemmacomponents = []
             for (tag, end) in morphemes:
-                if start < end and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:
-                    morpheme = word[start:end]
-                    if tag in self.stemdict:
-                        morpheme = self.stemdict[tag].get(morpheme, morpheme)
+                if start < end and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): 
+                    morpheme = word[start:end]                 
                     if len(morpheme) > 0:
+                        if tag in self.stemdict and self.int2tag[tag][:2] == self.int2tag[postag][:2]: #CW 20220626
+                            normalized = self.stemdict[tag].get(morpheme, None)
+                            if normalized:
+                               morpheme = (normalized,morpheme)
+                            else:
+                               morpheme = (morpheme,)
+                        else:
+                           morpheme = (morpheme,)
                         lemmacomponents.append(morpheme)
                 start = end
             if taglevel == 1:
-                lemma = self.makelemma(lemmacomponents,self.int2tag[postag])
+                lemma = self.makelemma(lemmacomponents,self.int2tag[postag],upcase)
             elif taglevel == 2:
-                lemma = '+'.join(lemmacomponents)
+                lemma = self.makestem(lemmacomponents,self.int2tag[postag]) #'+'.join(lemmacomponents)
             return lemma, self.int2tag[postag]
         else:
             start = 0
@@ -439,12 +478,18 @@ class HanoverTagger:
                 if tag > 0:
                     morpheme = word[start:end]
                     morphlist.append((morpheme, self.int2tag[tag]))
-                    if start < end and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): #not tag.startswith('SUF') and  tag not in ['PREF_PP','ADJ_COMP','ADJ_SUP']:                     
-                        if tag in self.stemdict:
-                            morpheme = self.stemdict[tag].get(morpheme, morpheme)
+                    if start < end and len(morpheme) > 0 and self.relevant_morpheme(self.int2tag[tag],self.int2tag[postag]): 
+                        if tag in self.stemdict and self.int2tag[tag][:2] == self.int2tag[postag][:2]: #CW 20220626
+                            normalized = self.stemdict[tag].get(morpheme, None)
+                            if normalized:
+                               morpheme = (normalized,morpheme)
+                            else:
+                               morpheme = (morpheme,)
+                        else:
+                           morpheme = (morpheme,)
                         lemmacomponents.append(morpheme)
                 start = end
-            lemma = ''.join(lemmacomponents)
+            lemma = self.makestem(lemmacomponents,self.int2tag[postag]) #''.join(lemmacomponents)
             return lemma, morphlist, self.int2tag[postag]
 
 
@@ -667,6 +712,14 @@ class TrainHanoverTagger:
             p_len_t[t] = p_l
         return p_len_t
 
+    def find_openclass(self):
+        N_mp = Counter([m for morphemes in self.morphdata for m in morphemes])
+        N_t_hapax = Counter([t for (m,t) in N_mp  if N_mp[(m,t)] == 1])
+        N_hapax = sum(N_t_hapax.values())
+        P_t_hapax = Counter({t:N_t_hapax[t]/N_hapax for t in N_t_hapax })
+        open_class = [t for t in P_t_hapax if P_t_hapax[t] > 0.005 and '_VAR' not in self.int2tag[t]]
+        return  open_class
+
     def hapaxprobs(self):
         count = {}
         for morphemes in self.morphdata:
@@ -675,11 +728,13 @@ class TrainHanoverTagger:
                 count_t.update([m])
                 count[t] = count_t
         p_hapax_t = {}
-        openclass = [self.tag2int[t] for t in ['NN','NE','ADJ','ADV','CARD','FM','VV']]
+        #openclass = self.tag2int[t] for t in ['NN','NE','ADJ','ADV','CARD','FM','VV']]
+        openclass = self.find_openclass()
         for t in openclass: #count:
             dist = Counter(count[t].values())
             if dist[1] > 0:
                 p_hapax_t[t] = math.log(dist[1] / self.N_t[t])
+                
         return p_hapax_t
 
     def transprob(self):
@@ -746,7 +801,8 @@ class TrainHanoverTagger:
                 if unknown > max_unknown:
                     max_unknown = unknown
         #return -2.3 + min(0, min_observed - max_unknown)
-        return -4.6 + min(0, min_observed - max_unknown)
+        #return -4.6 + min(0, min_observed - max_unknown)
+        return -6.9 + min(0, min_observed - max_unknown)
 
         
 
