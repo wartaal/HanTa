@@ -824,7 +824,8 @@ def make_morphem_patterns(wordlist):
 
 
 
-
+#Download the following files from University of Stuttgart and ISD Mannheim
+#Repair some errors in the tiger corpus by first running repair_tiger.py
 Data = read_tiger_words(r'tiger.16012013.conll09c')
 Data += read_dereko_words(r'DeReKo-2014-II-MainArchive-STT.100000.freq')
 Data += read_nounlist(r'substantive.txt')
