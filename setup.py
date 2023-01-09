@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="HanTa",
-    version="0.2.1",
+    version="1.0.0",
     author="Christian Wartena",
     author_email="Christian.Wartena@hs-hannover.de",
     description="Hannover Tagger: Morphological Analysis and POS Tagging",
@@ -18,6 +18,8 @@ setuptools.setup(
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Operating System :: OS Independent",
+        "Natural Language :: Dutch",
+        "Natural Language :: English",
         "Natural Language :: German",
         "Topic :: Text Processing :: Linguistic",
         "Topic :: Software Development :: Libraries :: Python Modules",
