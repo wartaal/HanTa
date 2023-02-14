@@ -124,9 +124,8 @@ def make_morphpattern(word,pos):
     if len(suffix) > 0:
         morphemes.append((suffix,stag))
 
-    
-      
-    morphemes.append(('','END_'+pos))
+ 
+    #morphemes.append(('','END_'+pos))
         
     return lemma,morphemes,mapping
 
@@ -361,7 +360,10 @@ Data = postprocess_morphemes(Data)
 fout = codecs.open("labeledmorph_en.csv", "w","utf-8")
 
 for word in Data:
-    print(*word,sep='\t',end='\n',file=fout)
+    if len(word[-1]) == 3:
+       print(*word,sep='\t',end='\n',file=fout)
+    else:
+       print(*word[:-1],sep='\t',end='\n',file=fout)
 fout.close() 
 
 
