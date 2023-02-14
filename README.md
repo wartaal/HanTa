@@ -57,7 +57,7 @@ from pprint import pprint
 sent = "Die Europawahl in den Niederlanden findet immer donnerstags statt."
 
 words = nltk.word_tokenize(sent)
-lemmata = tagger.tag_sent(words)
+lemmata = tagger_de.tag_sent(words)
 pprint(lemmata)
 ```
 
