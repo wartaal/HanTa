@@ -64,9 +64,9 @@ pprint(lemmata)
 ## Further reading
 For more information refer to the following resources:
 
+* The main documentation: The Hanover Tagger (Version 1.1.0) - Lemmatization, Morphological Analysis and POS Tagging in Python. Hannover, 2023 [Online Available](https://doi.org/10.25968/opus-2457)
 * Demo.ipynb on GitHub (https://github.com/wartaal/HanTa)
-* Manual - Coming soon
-* Christian Wartena. A probabilistic morphology model for German lemmatization.
+* Original publication: Christian Wartena. A probabilistic morphology model for German lemmatization.
 In *Proceedings of the 15th Conference on Natural Language Processing
 (KONVENS 2019): Long Papers*, pages 40–49, Erlangen, Germany, 2019.
 German Society for Computational Linguistics & Language Technology. [Online Available](https://doi.org/10.25968/opus-1527)
