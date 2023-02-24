@@ -73,7 +73,7 @@ class HanoverTagger:
             self.strict = True
         self._debug = False
         if model:
-            self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t, self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.stemtags, self.lemmasuffixtable,  self.capitalizedlemmata, self.cache = model
+            self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t, self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.nonstemtags, self.lemmasuffixtable,  self.capitalizedlemmata, self.cache = model
         self.tag2int['EMPTY'] = EMPTY
         self.tag2int['END'] = END
         self.tag2int['UNKNOWN'] = UNKNOWN
@@ -403,9 +403,10 @@ class HanoverTagger:
     def relevant_morpheme(self, mtag, pos):
         if pos != None:
             mainpostag = pos.split('(')[0]
-            return mtag in self.stemtags.get(mainpostag,[])
+            return not mtag in self.nonstemtags.get(mainpostag,[])
         else:  
-            return mtag in set().union(*self.stemtags.values())
+            return True
+            #return mtag in set().union(*self.stemtags.values())
 
     def analyze(self, word, pos='EMPTY', taglevel=1, casesensitive=True):
        if pos == 'EMPTY' or pos not in self.tag2int:
@@ -577,7 +578,7 @@ class TrainHanoverTagger:
         self.stemdict = {}
         self.tag2int = {}
         self.int2tag = {}
-        self.stemtags = {}
+        self.nonstemtags = {}
         self.lemmasuffixtable = {}
         self.capitalizedlemmata = set()
         self.word_tags = set()
@@ -778,14 +779,14 @@ class TrainHanoverTagger:
                 self.capitalizedlemmata.update([tag])
         lemmasuff = self.reducelemmasuffix(lemmasuff)
         self.lemmasuffixtable = self.suffixtable(lemmasuff)
-        for p in cnt_lex_morph:
-            rel_p = []
+        for p in cnt_lex_morph: #change 2023.02.24 Store tags to be removed,  not the ones to be kept (make keeping a morpheme the default)
+            irrel_p = []
             (cnt_r, cnt_i) = cnt_lex_morph[p]
             #print(p,cnt_r, cnt_i)
-            for t in cnt_r:
-                if cnt_r[t] > cnt_i[t]:
-                    rel_p.append(t)
-            self.stemtags[p] = rel_p
+            for t in cnt_i:
+                if cnt_i[t] > cnt_r[t]:
+                    irrel_p.append(t)
+            self.nonstemtags[p] = irrel_p
             
 
     def collect_tag_freqs(self):
@@ -1153,7 +1154,7 @@ class TrainHanoverTagger:
         self.train_sent_model()
         model = (
         self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
-        self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.stemtags, self.lemmasuffixtable, self.capitalizedlemmata,{})
+        self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.nonstemtags, self.lemmasuffixtable, self.capitalizedlemmata,{})
         tagger = HanoverTagger(None, model)
         if observed_values:
             self.cache = self.precompute_observed(tagger)
@@ -1163,7 +1164,7 @@ class TrainHanoverTagger:
     def write_model(self, filename):
         model = (
         self.tag2int, self.int2tag, self.LP_s_t, self.LP_len_t, self.Int_t, self.LP_hapax_t, self.LP_trans, self.LP_m_t,
-        self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.stemtags, self.lemmasuffixtable, self.capitalizedlemmata, self.cache)
+        self.stemdict, self.LP_trans_word, self.LP_wtag, self.LP_case_t, self.nonstemtags, self.lemmasuffixtable, self.capitalizedlemmata, self.cache)
 
         file = gzip.GzipFile(filename, 'wb')
         pickle.dump(model, file)
