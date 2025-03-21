@@ -2,7 +2,7 @@ import codecs
 
 
 
-def correctlemma(word,lemma,pos,features):
+def correctlemma(nr,word,lemma,pos,features):
     if pos == 'NNE':
         pos = 'NE'
     elif word == 'propperen' and features.strip() == 'case=gen|number=sg|gender=neut|degree=comp':
@@ -68,6 +68,8 @@ def correctlemma(word,lemma,pos,features):
         lemma = 'Maschine'
     elif lemma[-1] == '-' and pos == 'TRUNC':
         lemma = lemma[:-1]
+    elif word == 'inner-' and pos == 'TRUNC':
+        lemma = 'inner'
     elif lemma == 'nom.sg.masc' and word == 'Werbespot':
         lemma = 'Werbespot'
     elif word.lower().startswith('unser') and pos == 'PPOSAT':
@@ -124,6 +126,9 @@ def correctlemma(word,lemma,pos,features):
         word = 'Stadtbaukunst'
     elif lemma == 'Aufenthaltserlaubni' and word == 'Aufenthaltserlaubnis':
         lemma = 'Aufenthaltserlaubnis'
+    elif lemma == 'Gewerkschafsfunktionär' and word == 'Gewerkschafsfunktionär':
+        lemma = 'Gewerkschaftsfunktionär'
+        lemma = 'Gewerkschaftsfunktionär'
     elif lemma == 'Startramp':
         lemma = 'Startrampe'
     elif lemma == 'Aktivisten':
@@ -160,6 +165,8 @@ def correctlemma(word,lemma,pos,features):
          lemma = 'PKK-Funktionärin' 
     elif word == 'Parteiabweichlern':
          lemma = 'Parteiabweichler' 
+    elif word == 'Hungrigen' and pos == 'NN':
+         lemma = 'hungriger' 
     elif lemma == '-' or lemma == "--" or lemma == "---":
         lemma =  word
     elif word == "--" and lemma != '--':
@@ -206,6 +213,8 @@ def correctlemma(word,lemma,pos,features):
         lemma = 'Stuttgarter'
     elif word == 'Düsseldorfer' and lemma == 'düsseldorfer' and pos == 'NN':
         lemma = 'Düsseldorfer'
+    elif lemma == 'niedersachse' and pos == 'NN':
+        lemma = 'Niedersachse'
     elif word == 'de' and lemma == 'da' and pos == 'NE':
         lemma = 'de'
     elif word == 'Pidgin' and lemma == 'Pigdin':
@@ -274,6 +283,12 @@ def correctlemma(word,lemma,pos,features):
         features = features.replace('number=pl','number=sg')
         features = features.replace('gender=fem','gender=neut')
         features = features.replace('gender=masc','gender=neut')
+    elif word == 'Weiterleben' and lemma == 'Weiterleben' and pos == 'NN':
+        lemma = 'weiterleben'
+    elif word == 'Freien' and lemma == 'Freie' and pos == 'NN':
+        lemma = 'freie'
+    elif word == 'Gleichwertiges' and lemma == 'gleichwertig' and pos == 'NN':
+        lemma = 'gleichwertige'
     elif word == 'möchte' and pos == 'VVFIN':
         pos = 'VMFIN'  
     elif word == 'mußte' and pos == 'VVFIN':
@@ -290,6 +305,12 @@ def correctlemma(word,lemma,pos,features):
         lemma = lemma[:-2]
     elif lemma == 'Dinosaurier-Hits':
         lemma = 'Dinosaurier-Hit'
+    elif lemma == 'DGB-landesvorsitzend':
+        lemma = 'DGB-Landesvorsitzende'
+    elif lemma.endswith('-vorsitzend') and pos == 'NN':
+        lemma = lemma[:-11] + '-Vorsitzende'
+    elif lemma.endswith('-ratsvorsitzend') and pos == 'NN':
+        lemma = lemma[:-15] + '-Ratsvorsitzende'
     elif word == 'Begünstigten' and lemma == 'begünstigter'	and pos == 'ADJA':
         pos = 'NN'
         lemma = 'begünstigte'
@@ -305,9 +326,56 @@ def correctlemma(word,lemma,pos,features):
         lemma = 'branchendritte'
     elif lemma.lower() == 'ranglisten-zweiter'	and pos == 'NN':
         lemma = 'ranglisten-zweite'
-   
+    elif lemma == 'seite' and pos == 'NN':
+        lemma = 'Seite'
+    elif lemma == 'farbig' and pos == 'NN':
+        lemma = 'farbige'
+    elif word == 'volksverbunden' and lemma == 'volksverbund':
+        lemma = 'volksverbunden'
+    elif word == 'uneingeladen' and lemma == 'uneingelad':
+        lemma = 'uneingeladen'
+    elif word == 'nahe' and lemma == 'nah' and pos == 'ADJD':
+        lemma = 'nahe'
+    elif word == 'dünne' and lemma == 'dünn' and pos == 'ADJD': #????
+        lemma = 'dünne'
+    elif word == 'rapide' and lemma == 'rapid' and pos == 'ADJD':
+        lemma = 'rapide'
+    elif word == 'spitze' and lemma == 'spitz' and pos == 'ADJD':
+        lemma = 'spitze'
+    elif word.lower() == 'sachte' and lemma == 'sacht'  and pos == 'ADJD':
+        lemma = 'sachte'
+    elif word.lower() == 'später' and lemma == 'spät' and pos == 'ADJD' and 'degree=pos' in features:
+        features = features.replace('degree=pos','degree=comp')
+    elif nr == '24052_22' and word == 'temporär' and pos == 'ADJA':
+        pos = 'ADJD'
+    elif nr == '18067_20' and word == 'enger' and pos == 'ADJD':
+        pos = 'ADJA'
+    elif word == 'schlechter' and lemma == 'schlecht' and pos == 'ADJD' and 'degree=pos' in features:
+        pos = 'ADJA'
+    elif word == 'zäher' and lemma == 'zäh' and pos == 'ADJD' and 'degree=pos' in features:
+        pos = 'ADJA'
+        features = 'case=dat|number=sg|gender=fem|degree=pos'
+    elif word == 'vorsichtiger' and lemma == 'vorsichtig' and pos == 'ADJD' and 'degree=pos' in features:
+        pos = 'ADJA'
+        features = 'case=dat|number=sg|gender=neut|degree=pos'
+    elif word == 'dauerhafter' and lemma == 'dauerhaft' and pos == 'ADJD' and 'degree=pos' in features:
+        pos = 'ADJA'
+        features = 'case=dat|number=sg|gender=fem|degree=pos'
+    elif word == 'langem' and lemma == 'lang' and pos == 'ADJD' and 'degree=pos' in features:
+        pos = 'ADJA'
+        features = 'case=dat|number=sg|gender=fem|degree=pos'
+    elif word == 'volltoniger' and lemma == 'volltonig' and pos == 'ADJD' and 'degree=pos' in features:
+        features = features.replace('degree=pos','degree=comp')
+    elif word == 'weiter' and lemma == 'weit' and pos == 'ADJD' and 'degree=pos' in features:
+        features = features.replace('degree=pos','degree=comp')
+    elif word == 'täglich' and lemma == 'täglich' and pos == 'ADJD' and 'degree=comp' in features:
+        features = features.replace('degree=comp','degree=pos')
+    elif pos == 'ADJD' and word == 'jüngst' and lemma == 'jung' and 'degree=sup' in features:
+        lemma = 'jüngst'
+        pos = 'ADV'
+        features = ''
 
-        
+      
 
     if pos == 'ADJD' and word.lower() != lemma.lower() and word[-1] in ['t','n']  and lemma[-2:] in ['en','rn']:
         lemma = word.lower()
@@ -323,7 +391,9 @@ def correctlemma(word,lemma,pos,features):
         lemma = 'viert'
     elif pos == 'ADJD' and lemma == 'nächster':
         lemma = 'nächst'
+    
 
+#TODO Hungrigen
 
     if lemma[0].islower() and word[0].isupper and pos == 'NN':    
        if lemma.endswith('nd'):
@@ -363,7 +433,7 @@ for line in fin:
     columns = line.split()
     if len(columns) == 15:
         #word,lemma,pos =  columns[1], columns[2], columns[4]
-        word, lemma, pos, features = correctlemma(columns[1], columns[2], columns[4],columns[6])
+        word, lemma, pos, features = correctlemma(columns[0], columns[1], columns[2], columns[4],columns[6])
         print(columns[0],word,lemma,columns[3],pos,columns[5],features, *columns[7:], sep='\t',end='\n',file=fout)
     else:
         print(line,end='',file=fout)

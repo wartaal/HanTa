@@ -22,22 +22,23 @@ def read_tiger_words(tiger_corpus_file):
     
 def read_dereko_words(dereko_file):
     data = []
-    with codecs.open(dereko_file,'r','utf8') as f:
+    with  open(dereko_file,'r', encoding = 'utf8') as f:
         for line in f:
             columns = line.split()
-            if len(columns) == 4:
+            if len(columns) == 3:
                 word,lemma,pos =  columns[0].strip(), columns[1].strip(), columns[2].strip()
-                if pos[0] == 'V' and lemma != 'UNKNOWN' and lemma != 'unknown' and '|' not in lemma:
-                    if pos == 'VVINF':
-                        match = re.fullmatch(r'(.+)zu(.+)',word)
-                        if match and lemma == match[1]+match[2]:
-                            pos = 'VVIZU'
-                       
-                    
-                    data.append((-1,word,lemma,pos,[])) 
-                #NN und NE werden zu häufig verwechselt in Dereko. Nicht ohne weiteres Nutzbar.                    
-                #elif pos == 'NN' and len(word) > 2 and lemma != 'UNKNOWN' and lemma != 'unknown' and '|' not in lemma:
-                #    data.append((-1,word,lemma,pos,[]))  
+                features = []
+                if word[-2:] == 'er' and pos == 'ADJD' and lemma[-1]== word[-3]:
+                    features.append('degree=comp')
+                if word[-4:] == 'sten' and  pos == 'ADJD' and lemma[-1]== word[-5]:
+                    features.append('degree=sup')
+                elif pos == 'ADJA' and word[len(lemma):].startswith('er'):
+                    features.append('degree=comp')
+                elif pos == 'ADJA' and word[len(lemma):].startswith('est'):
+                    features.append('degree=sup')
+                elif pos == 'ADJA' and word[len(lemma):].startswith('st'):
+                    features.append('degree=sup')
+                data.append((-1,word,lemma,pos,features)) 
     return data
 
 
@@ -111,7 +112,7 @@ verbpref = 'ver|be|ent|er|zer|miss|hinter|über|wider|ge'
 
 
 
-noncompound = ['abm', 'all', 'auf', 'aus', 'aus', 'bar', 'des', 'ei', 'ein', 'einzel', 'ente', 'fort', 'gesell', 'groß', 'gut', 'hau', 'hin', 'hoch', 'hypo', 'in', 'inn', 'innen', 'ion', 'kap', 'kombi', 'kommen', 'kont', 'lade', 'lan', 'lieb', 'los', 'miß', 'neu', 'ober', 'pro', 'rück', 'sau', 'saus', 'schaft', 'sein', 'selbst', 'ser', 'sfr', 'sol', 'sozial', 'spitz', 'super', 'super', 'tele', 'verb', 'vor', 'voraus', 'wohn', 'über','zustande']
+noncompound = ['abm', 'all', 'auf', 'aus', 'aus', 'bar', 'des', 'ei', 'ein', 'einzel', 'ente', 'fort', 'gesell', 'groß', 'gut', 'hau', 'hin', 'hoch', 'hypo','ich', 'in', 'inn', 'innen', 'ion', 'kap', 'kombi', 'kommen', 'kont', 'lade', 'lan', 'lieb', 'los', 'miß', 'neu', 'ober', 'pro', 'rück', 'sau', 'saus', 'schaft', 'sein', 'selbst', 'ser', 'sfr', 'sol', 'sozial', 'spitz', 'super', 'super', 'tele', 'verb', 'vor', 'voraus', 'wohn', 'über','wie','zustande']
 # Wohnhaus, Wohn- und Geschäftshaus, Wanderurlaub, etc. V-NN Komposita lösen
 
 #some nouns that can loose their final 'e' in a compund
@@ -121,7 +122,7 @@ not_nominalized = ['wunde','junge','tiefe','weite','weiche','spitze','note']
 
 noverbstems = ['statt','sonder','sonn','weih','wett']
 
-unsplitable = ["frustration","potentat","potentaten","uniform","kontakt","generation","werkstatt","werkstätt","schienbein","wegweiser"]
+unsplitable = ["frustration","potentat","potentaten","uniform","kontakt","generation","werkstatt","werkstätt","schienbein","wegweiser","transport","notwendigkeit","schriftsteller"]
 
 #verbs with nonsplitable prefix and other verbs that buil pp without ge- 
 def nonsplitprefix(lemma):
@@ -321,11 +322,12 @@ def split_pp_nopref(word,stem,pos):
     return morphemes,mapping
 
 
-def split_adj(word,stem,pos,feat):
+def split_adj(word,stem,pos,feat,attr):
     mapping = ()
     suftag = 'SUF_ADJ'
     suffix = ""
     root = word 
+    
     
     if pos == 'NNA':
         tag = 'ADJ'
@@ -340,14 +342,22 @@ def split_adj(word,stem,pos,feat):
         degree = 0
     
     if degree == 2:
-        suffixpattern = '(e?st)('+suffixtable[suftag] +')'
+        if attr:
+            suffixpattern = '(e?st)('+suffixtable[suftag] +')'
+        else:
+            suffixpattern = '(e?sten)((:?)?)'
         degreetag = "ADJ_SUP"
     elif degree == 1:
-        suffixpattern = '(er)('+suffixtable[suftag] +')'
+        if attr:
+            suffixpattern = '(er)('+suffixtable[suftag] +')'
+        else:
+            suffixpattern = '(er)((:?)?)?'
         degreetag = "ADJ_COMP"
     else:
-        suffixpattern = '('+suffixtable[suftag] +')'
-       
+        if attr:
+            suffixpattern = '('+suffixtable[suftag] +')'
+        else:
+            suffixpattern = '((:?)?)'
     pattern = stem+suffixpattern
     match = re.fullmatch(pattern,word)
                  
@@ -361,7 +371,12 @@ def split_adj(word,stem,pos,feat):
                 degreesuff = ''
             else:
                 degreesuffix = match[1]
-                suffix = match[2]    
+                if degreesuffix == None or len(degreesuffix) == 0:
+                    degree = 0
+                suffix = match[2] 
+                
+                
+
     elif pos == 'NNA':
         pattern = stem+'(e?st|er)('+suffixtable[suftag] +')'
         match = re.fullmatch(pattern,word)
@@ -401,7 +416,7 @@ def split_adj(word,stem,pos,feat):
         morphemes.append((root,tag))
         if degree > 0:
             morphemes.append((degreesuffix,degreetag))
-        if len(suffix) > 0:
+        if suffix != None and len(suffix) > 0:
             morphemes.append((suffix,suftag))
     else:
               
@@ -598,8 +613,10 @@ def find_morphemes(word,lemma,tag,feat):
         morphemes =  [(word,'ORD_ABR')]
     elif tag == "ADJ(A)" and word == stem:
         morphemes = [(word,'ADJ_INVAR')]
-    elif tag == "ADJA" or tag == "ADJD" or tag == "ADJ(A)" or tag == "ADJ(D)" or tag == "NNA":
-        morphemes, mapping = split_adj(word,stem,pos,feat)
+    elif tag == "ADJA" or tag == "ADJ(A)" or tag == "NNA":
+        morphemes, mapping = split_adj(word,stem,pos,feat,attr=True)
+    elif tag == "ADJD" or tag == "ADJ(D)":
+        morphemes, mapping = split_adj(word,stem,pos,feat,attr=False)
     elif tag == "TRUNC":
         morphemes, mapping = split_trunc(word,stem,base_feat) 
     elif tag == 'NN' and len(word) == 1:
@@ -673,8 +690,6 @@ def splitcompound(nounset,nounvarset,propernounset,lemma,noun,startlen = 2,lette
            if (len(n1) > 2 or n1 in ['öl'] or noun[2] == '-') and (n1_noun or n1_nounvar or n1_propernoun or n1_nounelis or n1_card  or n1_acro or n1_nominalized):
                n2 = noun[i:]
                if n1_noun: #nounvar requires Fuge (or plural) between compound parts 
-                  if(n1 == 'verhör'):
-                      print(pos,lemma,n2)
                   sc_n2 = splitcompound(nounset,nounvarset,{},lemma,n2,3, True)
                   if len(sc_n2) > 0:
                       return [(n1,'NN')] + sc_n2
@@ -692,15 +707,14 @@ def splitcompound(nounset,nounvarset,propernounset,lemma,noun,startlen = 2,lette
                            ntag = 'ACR_NN'
                        else:
                           ntag = 'ACR_NE'
-                   elif n1_propernoun:
-                       ntag = 'NE'
                    elif n1_noun:
                        ntag = 'NN'
+                   elif n1_propernoun:
+                       ntag = 'NE'
                    elif n1_nounelis:
                        ntag = 'NN_VAR_EL'
                    elif n1_nominalized: #TODO adj-nn woanders behandeln
                         ntag = 'ADJ'
-                        #print(noun)
                    else:
                        ntag = 'NN_VAR'
                    if len(sc_n2) > 0:
@@ -780,7 +794,7 @@ def splitcompound(nounset,nounvarset,propernounset,lemma,noun,startlen = 2,lette
         return [(noun,'ACR_NE')]
     elif noun[-1] == 'e' and noun[:-1] in nominalized:
         return [(noun[:-1],'ADJ'),('e','SUF_ADJ')]
-    elif noun[-2:] in ['es','er','em','en'] and noun[:-2] in nominalized:
+    elif noun[-2:] in ['es','er','em','en'] and noun[:-2] in nominalized and noun not in ['freier','schlichter']:
         return [(noun[:-2],'ADJ'),(noun[-2:],'SUF_ADJ')]
     else:
         return []
@@ -969,7 +983,7 @@ def split_adj_lemma(stem,tag,subst):
                     subst = (subst[0],subst[1][start_stem:],subst[2][start_stem:])
                 else:
                     subst = ()
-    elif stem.endswith('er') and stem not in ['ander','leer','inner','teuer','propper','lauter','sauer','illuster','leger','sinister','bieder',]:
+    elif stem.endswith('er') and stem not in ['ander','leer','inner','teuer','propper','lauter','sauer','illuster','leger','sinister','bieder']:
         if stem[:-2]  in NEstems:
             stem = stem[:-2] 
             stemtag = 'NE'
@@ -1149,6 +1163,7 @@ def collect_morphemes(morphlist):
             continue
         if tag == 'NNA':
             nominalized.update([stem])
+        #print(sentnr,stem,tag,morphemes )
         for i in range(len(morphemes)):
             m = morphemes[i]
             if len(m[0]) < 2:
@@ -1174,7 +1189,7 @@ def collect_morphemes(morphlist):
             tagcnt = mostcommontag.get(m[0],Counter()) 
             tagcnt.update([m[1]])  
             mostcommontag[m[0]] = tagcnt          
-
+            
     mostcommontag = {w:mostcommontag[w].most_common(1)[0][0] for w in mostcommontag }
 
     for n in list(nounstems):
@@ -1205,11 +1220,11 @@ def make_morphem_patterns(wordlist):
     data = process_words(wordlist) 
     print('collecting morphemes')    
     collect_morphemes(data) 
-    print('Post processing')   
+    print('Postprocessing')   
     data = postprocess_morphemes(data)  
     print('collecting morphemes (2nd round)')       
     collect_morphemes(data) 
-    print('Post processing (2nd round)')  
+    print('Postprocessing (2nd round)')  
     data = postprocess_morphemes(data)   
           
     return data
@@ -1218,7 +1233,8 @@ def make_morphem_patterns(wordlist):
 #Download the following files from University of Stuttgart and ISD Mannheim
 #Repair some errors in the tiger corpus by first running repair_tiger.py
 Data = read_tiger_words(r'tiger.16012013.conll09c')
-Data += read_dereko_words(r'DeReKo-2014-II-MainArchive-STT.100000.freq')
+#Data += read_dereko_words(r'DeReKo-2014-II-MainArchive-STT.100000.freq')
+Data += read_dereko_words(r'DeReKo-2014-II_selected.tsv')
 Data += read_nounlist(r'substantive.txt')
 # http://www.deutschonline.de/Deutsch/Grammatik/Plural.htm
 
