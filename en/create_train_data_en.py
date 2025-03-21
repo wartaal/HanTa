@@ -176,6 +176,8 @@ def read_brown():
                 sent1.append(("'",'POS',False))
             elif '+' in tag:
                 problematic = True
+            elif 'NIL' == tag:
+                problematic = True
             else:
                 sent1.append((word,tag,TL))
                 
