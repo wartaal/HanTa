@@ -46,11 +46,11 @@ class HanoverTagger:
                         states.append(a)
                         end+=1
                 i+=1
-            self.reachability[c] = states   
+            self.reachability[c] = frozenset(states)  
         
     #Find classes that are not analyzable, i.e. classes that can only be reached from the start and only can be followed by an end node
     def atomic(self):
-        self.atomic_class = [c for c in self.reachability if len(self.reachability[c]) == 2 and -c in self.reachability[c] ] 
+        self.atomic_class = frozenset([c for c in self.reachability if len(self.reachability[c]) == 2 and -c in self.reachability[c] ]) 
 
  
         
@@ -95,7 +95,9 @@ class HanoverTagger:
         elif not strict and t in self.LP_s_t and t in self.LP_hapax_t:
             mlen = len(m)
             if (wlen < 4 or mlen > 2): 
-                if mlen > 3 and m[-3:] in self.LP_s_t[t]:
+                if mlen > 4 and m[-4:] in self.LP_s_t[t]:
+                    lp_suf = self.LP_s_t[t][m[-4:]]
+                elif mlen > 3 and m[-3:] in self.LP_s_t[t]:
                     lp_suf = self.LP_s_t[t][m[-3:]]
                 elif mlen > 2 and m[-2:] in self.LP_s_t[t]:
                     lp_suf = self.LP_s_t[t][m[-2:]]
@@ -233,7 +235,7 @@ class HanoverTagger:
                 
             table[0][(EMPTY,START)] = 0
             
-            reachable_t = self.reachability.get(targetpos,[])   
+            reachable_t = self.reachability.get(targetpos,frozenset())   
 
             for i in range(wlen + 1):
                 row = table[i]
@@ -815,7 +817,7 @@ class TrainHanoverTagger:
         exclude = []
         sufcount = Counter()
         n_suf_t = {}
-        for len_s in range(3, -1, -1):
+        for len_s in range(4, -1, -1):
             for morphemes in self.morphdata:
                 for morph, t in morphemes:
                     if t in self.LP_hapax_t and self.N_m[morph] < 20 and len(morph) > len_s and not self.endswith_one_of(morph, exclude):
@@ -838,7 +840,7 @@ class TrainHanoverTagger:
             sum_t = sum([n_suf[s] for s in allsufs])
             for suf in allsufs:
                 if n_suf[suf] > 0:
-                    p_suf[suf] = math.log(n_suf[suf] / sum_t)
+                    p_suf[suf] = round(math.log(n_suf[suf] / sum_t),5)
                 else:
                     p_suf[suf] = -math.inf
             p_suf_t[t] = p_suf
@@ -868,7 +870,7 @@ class TrainHanoverTagger:
             total = sum(p_l)
             for l in range(len(p_l)):
                 if p_l[l] > 0:
-                    p_l[l] = math.log(p_l[l] / total)
+                    p_l[l] = round(math.log(p_l[l] / total),5)
                 else:
                     p_l[l] = -math.inf
             p_len_t[t] = p_l
@@ -895,7 +897,7 @@ class TrainHanoverTagger:
         for t in openclass: #count:
             dist = Counter(count[t].values())
             if dist[1] > 0:
-                p_hapax_t[t] = math.log(dist[1] / self.N_t[t])
+                p_hapax_t[t] = round(math.log(dist[1] / self.N_t[t]),5)
         return p_hapax_t
 
     def transprob(self):
@@ -935,6 +937,7 @@ class TrainHanoverTagger:
             total = sum(lp_m.values())
             for m in lp_m:
                 lp_m[m] = round(math.log(lp_m[m] / total), 5)
+            lp_m_t[t] = dict(lp_m_t[t])
 
         return lp_m_t
   
@@ -950,6 +953,7 @@ class TrainHanoverTagger:
                total = 2 + lp_case_t[tag][True] + lp_case_t[tag][False] 
                lp_case_t[tag][True]  = math.log((1+lp_case_t[tag][True])/total)
                lp_case_t[tag][False]  = math.log((1+lp_case_t[tag][False])/total)
+               lp_case_t[tag] = dict(lp_case_t[tag])
            else:
                lp_case_t[tag] = {True:math.log(0.5),False:math.log(0.5)}
             
