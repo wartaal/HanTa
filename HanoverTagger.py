@@ -84,27 +84,35 @@ class HanoverTagger:
         self.int2tag[END_UNKNOWN] = 'END_UNKNOWN'
         self.reachable()
         self.atomic()
+        self.LP_trans_nonfinal = {}
+        self.LP_trans_final = {}
+        for state, followers in self.LP_trans.items():
+            self.LP_trans_final[state]    = [(t, p) for t, p in followers.items() if t < 0]
+            self.LP_trans_nonfinal[state] = [(t, p) for t, p in followers.items() if t > 0]
 
 
     #log prob of a morpheme given a tag: p(m|t)
     def  lp_m_t(self, m, t,wlen,strict):
   
-        #if t in self.LP_m_t:
-        if m in self.LP_m_t[t]:
-            return self.LP_m_t[t][m]
-        elif not strict and t in self.LP_s_t and t in self.LP_hapax_t:
+ 
+        LP_m = self.LP_m_t[t]
+        if m in LP_m:
+            return LP_m[m]
+        
+        if not strict and t in self.LP_s_t and t in self.LP_hapax_t:
             mlen = len(m)
+            LP_s = self.LP_s_t[t]
             if (wlen < 4 or mlen > 2): 
-                if mlen > 4 and m[-4:] in self.LP_s_t[t]:
-                    lp_suf = self.LP_s_t[t][m[-4:]]
-                elif mlen > 3 and m[-3:] in self.LP_s_t[t]:
-                    lp_suf = self.LP_s_t[t][m[-3:]]
-                elif mlen > 2 and m[-2:] in self.LP_s_t[t]:
-                    lp_suf = self.LP_s_t[t][m[-2:]]
-                elif mlen > 2 and m[-1:] in self.LP_s_t[t]:
-                    lp_suf = self.LP_s_t[t][m[-1:]]
+                if mlen > 4 and m[-4:] in LP_s:
+                    lp_suf = LP_s[m[-4:]]
+                elif mlen > 3 and m[-3:] in LP_s:
+                    lp_suf = LP_s[m[-3:]]
+                elif mlen > 2 and m[-2:] in LP_s:
+                    lp_suf = LP_s[m[-2:]]
+                elif mlen > 2 and m[-1:] in LP_s:
+                    lp_suf = LP_s[m[-1:]]
                 else:
-                    lp_suf = self.LP_s_t[t]['']
+                    lp_suf = LP_s['']
                 lp = self.Int_t + self.LP_hapax_t[t] + self.LP_len_t[t][min(mlen, 24)] + lp_suf
                 if wlen == mlen: #CW 20220616 penalize analysis that assumes the whole word is one large unknown morpheme
                     lp -= 4.6
@@ -118,16 +126,16 @@ class HanoverTagger:
     #log prob of a transition
     #All values are stored in the model but here we return all possible following states (and their probabilities)
     #and already filter whether it should be a final state or not
-    def  lp_trans(self, state, final=False):
-            
-        if state in self.LP_trans:
-            if final:
-                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag < 0]
-            else:
-                following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag > 0]
-        else:
-            following = []
-        return following
+    #def  lp_trans(self, state, final=False):
+    #        
+    #    if state in self.LP_trans:
+    #        if final:
+    #            following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag < 0]
+    #        else:
+    #            following = [(tag, lp) for (tag, lp) in self.LP_trans[state].items() if tag > 0]
+    #    else:
+    #        following = []
+    #    return following
     
 
     #Run the forward algorithm over the HMM
@@ -156,15 +164,17 @@ class HanoverTagger:
                 lp = row[state]
                 if lp < rowbound:
                     continue
-                followup = self.lp_trans(state, final=False)
+                #followup = self.lp_trans(state, final=False)
+                followup = self.LP_trans_nonfinal.get(state,[])
 
                 for j in range(i + 1, wlen + 1):
+                    segment = word[i:j]
                     for tag1, lpt in followup:
                         #lp1 = self.lp_m_t(word[i:j], tag1)
                         #if not self.strict and lp1 == -math.inf:
                         #    lp1 = self.guess_lp_m_t(word[i:j], tag1,wlen)
                         #lp1 += lp + lpt
-                        lp1 = lp + lpt + self.lp_m_t(word[i:j], tag1, wlen,self.strict)
+                        lp1 = lp + lpt + self.lp_m_t(segment, tag1, wlen,self.strict)
                         if lp1 > lowerbound:
                             newstate = (state[1], tag1)
                             if newstate not in table[j]:
@@ -178,7 +188,8 @@ class HanoverTagger:
 
         for state in table[-2]:
             lp = table[-2][state]
-            followup = self.lp_trans(state, final=True)
+            #followup = self.lp_trans(state, final=True)
+            followup = self.LP_trans_final.get(state,[])
                     
             for tag1, lpt in followup:
                 lp1 = lp + lpt
@@ -216,14 +227,15 @@ class HanoverTagger:
     #Thus, we use only states that can lead to this POS, reducing the size of the tables.
     #Now a backpointer is maintained and the most likely path fis returned.
     #This method can be called from outside to analyze a word, or it is called to generate a lemma
-    #after POS Tagging of the sentence. In the first case the forward algorithm has to be run first to determin the
+    #after POS Tagging of the sentence. In the first case the forward algorithm has to be run first to determine the
     #POS if that was not specified in the call.
-    #In a first run we try to find a path without using unknown morphemes. If that is noct succesfull 
+    #In a first run we try to find a path without using unknown morphemes. If that is not succesfull 
     #(or if forced globally) a second run without this restriction is done
     
     def analyze_viterbi(self, word, targetpos):
         wlen = len(word)
         lowerbound = -1e6
+        reachable_t = self.reachability.get(targetpos,frozenset())  
         
         for localstrict in [True,False]: 
             table = []
@@ -235,8 +247,6 @@ class HanoverTagger:
                 
             table[0][(EMPTY,START)] = 0
             
-            reachable_t = self.reachability.get(targetpos,frozenset())   
-
             for i in range(wlen + 1):
                 row = table[i]
                 # Only continue with 3 top states
@@ -248,14 +258,16 @@ class HanoverTagger:
                     lp = row[state]
                     if lp < rowbound:
                         continue
-                    followup = [(t,p) for (t,p) in self.lp_trans(state, final=False) if t in reachable_t]
+                    #followup = [(t,p) for (t,p) in self.lp_trans(state, final=False) if t in reachable_t]
+                    followup =  [(t,p) for (t,p) in self.LP_trans_nonfinal.get(state,[]) if t in reachable_t]
                     for j in range(i + 1, wlen + 1):
+                        segment = word[i:j]
                         for tag1, lpt in followup:
                             #lp1 = self.lp_m_t(word[i:j], tag1)
                             #if not localstrict and lp1 == -math.inf:
                             #    lp1 = self.guess_lp_m_t(word[i:j], tag1,wlen)
                             #lp1 += lp + lpt
-                            lp1 = lp + lpt + self.lp_m_t(word[i:j], tag1, wlen,localstrict)
+                            lp1 = lp + lpt + self.lp_m_t(segment, tag1, wlen,localstrict)
                             if lp1 > lowerbound :
                                 newstate = (state[1], tag1)
                                 if newstate not in table[j] or lp1 > table[j][newstate]:
@@ -264,14 +276,16 @@ class HanoverTagger:
   
             for state in table[-2]:
                 lp = table[-2][state]
-                for tag1, lpt in self.lp_trans(state, final=True):
+                #for tag1, lpt in self.lp_trans(state, final=True):
+                for tag1, lpt in self.LP_trans_final.get(state,[]):
                     if tag1 == targetpos: 
-                       lp1 = lp + lpt
-                       if lp1 > lowerbound:
-                           newstate = (state[1], tag1)
-                           if newstate not in table[-1] or lp1 > table[-1][newstate]  :
-                               table[-1][newstate] = lp1
-                               backpointer[-1][newstate] = (state, wlen)
+                        lp1 = lp + lpt
+                        if lp1 > lowerbound:
+                            newstate = (state[1], tag1)
+                            if newstate not in table[-1] or lp1 > table[-1][newstate]  :
+                                table[-1][newstate] = lp1
+                                backpointer[-1][newstate] = (state, wlen)
+                        break
 
             if len(table[-1]) > 0:
                 break #Only if the last row is empty we need a second try without restrictions
@@ -316,8 +330,10 @@ class HanoverTagger:
             elif casesensitive:
                cs = True
             wprobs = dict(self._tag_word(w,cutoff = 5, casesensitive=cs,conditional=True))
+            wprobs_empty = len(wprobs) == 0
             if len(wprobs) == 1 and UNKNOWN in wprobs: #This should not occur but can result from wrong settings
                wprobs = {}
+               wprobs_empty = True
             row = {}
             backpointer.append({})
             if i == 0:
@@ -335,12 +351,12 @@ class HanoverTagger:
                     continue
                 lp_t = self.LP_trans_word[state] #.items()
                 for c, lp_tc in lp_t.items():
-                    if c not in wprobs and len(wprobs) > 0:
-                        continue
                     if c == END: #2020-11-11 We are not in the last row, so adding state <END> makes no sense
                         continue
-                    if len(wprobs) ==  0: #If the word is unknown anything goes
+                    if wprobs_empty: #If the word is unknown anything goes
                         lpwc = 0
+                    elif c not in wprobs:
+                        continue
                     else:
                         lpwc = wprobs[c]
                     lp = lp0 + lp_tc + lpwc
@@ -461,7 +477,9 @@ class HanoverTagger:
          
         lastmorpheme = lemmacomponents[-1][0]
         lasttag = lemmacomponents[-1][1]
-        if lasttag in self.stemdict:
+        str_tag = self.int2tag[lasttag]
+        #2nd condition added 2026-04-20 as test to avoid change of stem in english VVN used as ADJ (e.g. left)
+        if lasttag in self.stemdict and (str_tag[:2] == str_postag[:2] or  str_tag.startswith('SUF')): 
             lastmorpheme = self.stemdict[lasttag].get(lastmorpheme, lastmorpheme)
         lemmamorphemes = [m for m,_ in lemmacomponents[:-1]]+[lastmorpheme]
         
@@ -478,7 +496,7 @@ class HanoverTagger:
 
     def  normalize(self, w):
         #if re.match(r'^(`|``|´|´´|\'|\'\')$',w):
-        if self.re_qmark.match(w):
+        if len(w) <= 2 and self.re_qmark.match(w):
            return '"'
         else:
            return w.lower()
@@ -755,7 +773,7 @@ class TrainHanoverTagger:
 
             self.morphdata.append(morphemes)
             self.collectlemmata(lemma,stem,s_tag,lemmasuff)
-            postag = s_tag.split('(')[0]            
+            postag = s_tag.split('(')[0]       
             rel,irrel = self.relevant_tags(stem,morphemes,stemsub)
             cnt_lex_pos = cnt_lex_morph.get(postag,(Counter(),Counter()))
             cnt_lex_pos[0].update(rel)
