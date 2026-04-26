@@ -5,6 +5,8 @@ import codecs
 def correctlemma(nr,word,lemma,pos,features):
     if pos == 'NNE':
         pos = 'NE'
+    elif lemma == 'möchten':
+        lemma = 'mögen'
     elif word == 'propperen' and features.strip() == 'case=gen|number=sg|gender=neut|degree=comp':
         features = 'case=gen|number=sg|gender=neut|degree=pos'
     elif pos[:3] == 'ADJ' and lemma == 'erster':

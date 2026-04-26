@@ -28,6 +28,7 @@ Bruder	masc	Brüder
 Buch	neutr	Bücher
 Bund	masc	Bünde
 Busch	masc	Büsche
+Buße  fem   Bußen
 Dach	neutr	Dächer
 Damm	masc	Dämme
 Dampf	masc	Dämpfe
@@ -91,6 +92,7 @@ Krug	masc	Krüge
 Kuh	fem	Kühe
 Kunst	fem	Künste
 Kuss	masc	Küsse
+Lachs masc  Lachse
 Laden	masc	Läden
 Lamm	neutr	Lämmer
 Land	neutr	Länder
@@ -124,6 +126,7 @@ Rad	neutr	Räder
 Rand	masc	Ränder
 Rang	masc	Ränge
 Raum	masc	Räume
+Reifen masc Reifen
 Rock	masc	Röcke
 Ross	neutr	Rösser
 Sack	masc	Säcke
@@ -152,7 +155,6 @@ Spaß	masc	Späße
 Stadt	fem	Städte
 Stadt	fem	Städte
 Stamm	masc	Stämme
-Statt	fem	Stätte
 Stock	masc	Stöcke
 Storch	masc	Störche
 Stoß	masc	Stöße
