@@ -93,23 +93,22 @@ class HanoverTagger:
 
     #log prob of a morpheme given a tag: p(m|t)
     def  lp_m_t(self, m, t,wlen,strict):
-  
- 
+
         LP_m = self.LP_m_t[t]
         if m in LP_m:
             return LP_m[m]
         
-        if not strict and t in self.LP_s_t and t in self.LP_hapax_t:
-            mlen = len(m)
-            LP_s = self.LP_s_t[t]
+        if not strict and t in self.LP_hapax_t and t in self.LP_s_t :
+            mlen = len(m)     
             if (wlen < 4 or mlen > 2): 
+                LP_s = self.LP_s_t[t]
                 if mlen > 4 and m[-4:] in LP_s:
                     lp_suf = LP_s[m[-4:]]
                 elif mlen > 3 and m[-3:] in LP_s:
                     lp_suf = LP_s[m[-3:]]
                 elif mlen > 2 and m[-2:] in LP_s:
                     lp_suf = LP_s[m[-2:]]
-                elif mlen > 2 and m[-1:] in LP_s:
+                elif mlen > 1 and m[-1:] in LP_s:
                     lp_suf = LP_s[m[-1:]]
                 else:
                     lp_suf = LP_s['']
@@ -148,11 +147,12 @@ class HanoverTagger:
     def analyze_forward(self, word): 
     
         lowerbound = -1e6
-        table = []
+        #table = []
         wlen = len(word)
-        for i in range(wlen + 2):
-            table.append({})
-        table[0][(EMPTY, START)] = 0
+        #for i in range(wlen + 2):
+        #    table.append({})
+        #table[0][(EMPTY, START)] = 0
+        table = [{(EMPTY, START): 0}] + [{} for _ in range(wlen + 1)]
         for i in range(wlen + 1):
             row = table[i]
             # Only continue with 3 top states
@@ -209,7 +209,7 @@ class HanoverTagger:
             lp = table[-1][state]
             if lp == -math.inf:
                 continue
-            #pos = self.int2tag[-state[1]]
+
             pos = -state[1]
             if pos in results:
                 results[pos] = logaddexp(results[pos], lp) # TODO Maximum!!!
@@ -238,14 +238,16 @@ class HanoverTagger:
         reachable_t = self.reachability.get(targetpos,frozenset())  
         
         for localstrict in [True,False]: 
-            table = []
-            backpointer = []   
-
-            for i in range(wlen + 2):
-                table.append({})
-                backpointer.append({})
-                
-            table[0][(EMPTY,START)] = 0
+            #table = []
+            #backpointer = []   
+            #
+            #for i in range(wlen + 2):
+            #    table.append({})
+            #    backpointer.append({})
+            #    
+            #table[0][(EMPTY,START)] = 0
+            table = [{(EMPTY, START): 0}] + [{} for _ in range(wlen + 1)]
+            backpointer = [{} for _ in range(wlen + 2)]
             
             for i in range(wlen + 1):
                 row = table[i]
@@ -322,8 +324,7 @@ class HanoverTagger:
         table = []
         backpointer = []
         
-        for i in range(len(sent)):
-            w = sent[i]
+        for i, w in enumerate(sent):
 
             if i == 0:
                cs = False
